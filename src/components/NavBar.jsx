@@ -1,8 +1,8 @@
 import React from "react";
 
 const tabs = [
+  { key: "day", label: "Kalendorius", icon: "🗓️" },
   { key: "booking", label: "Rezervacija", icon: "📅" },
-  { key: "day", label: "Dienos", icon: "🗓️" },
   { key: "clients", label: "Klientai", icon: "👤" },
   { key: "stats", label: "Statistika", icon: "📈" },
   { key: "services", label: "Paslaugos", icon: "🛠️" },

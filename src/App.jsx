@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import Booking from "./pages/Booking";
 import DayView from "./pages/DayView";
+import Booking from "./pages/Booking";
 import Clients from "./pages/Clients";
 import Stats from "./pages/Stats";
 import SettingsServices from "./pages/SettingsServices";
@@ -11,7 +11,7 @@ import NavBar from "./components/NavBar";
 
 export default function App(){
   const [session, setSession] = useState(null);
-  const [tab, setTab] = useState("booking");
+  const [tab, setTab] = useState("day");
   const [workspace, setWorkspace] = useState(null);
 
   useEffect(() => {

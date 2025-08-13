@@ -1,6 +1,16 @@
 // src/pages/DayView.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import { format } from "date-fns";
+import {
+  format,
+  startOfMonth,
+  endOfMonth,
+  startOfWeek,
+  endOfWeek,
+  eachDayOfInterval,
+  addMonths,
+  isSameMonth,
+  parseISO,
+} from "date-fns";
 import { supabase } from "../supabaseClient";
 import DateField from "../components/DateField";
 import TimeField from "../components/TimeField";
@@ -28,14 +38,17 @@ function StatusPill({ status }) {
 }
 
 export default function DayView({ workspace }) {
+  // Pasirinkta diena (rodysime jos įrašus)
   const [date, setDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
+  // Mėnuo rodomas kalendoriuje
+  const [viewMonth, setViewMonth] = useState(() => new Date());
   const [items, setItems] = useState([]);
 
   // redagavimas
   const [editingId, setEditingId] = useState(null);
   const [edit, setEdit] = useState({ date: "", start_time: "", end_time: "", price: "", note: "" });
 
-  // paslaugos/kategorijos
+  // paslaugos/kategorijos (reikalinga greitam pridėjimui iš tarpo)
   const [services, setServices] = useState([]);
   const categories = useMemo(() => Array.from(new Set(services.map((s) => s.category))), [services]);
 
@@ -49,10 +62,9 @@ export default function DayView({ workspace }) {
     price: "",
     note: "",
   });
-  // ar vartotojas pats redagavo kainą greito pridėjimo modale
   const [addPriceEdited, setAddPriceEdited] = useState(false);
 
-  // klientai (paieška + sąrašas)
+  // klientai greitam pridėjimui
   const [clients, setClients] = useState([]);
   const [clientSearch, setClientSearch] = useState("");
   const [selectedClientId, setSelectedClientId] = useState(null);
@@ -66,6 +78,21 @@ export default function DayView({ workspace }) {
     gender: "female",
   });
 
+  // --------- KALENDORIUS (mėnesio tinklelis) ----------
+  const weekLabels = ["Pr", "An", "Tr", "Kt", "Pn", "Št", "Sk"];
+  const monthGridDays = useMemo(() => {
+    const start = startOfWeek(startOfMonth(viewMonth), { weekStartsOn: 1 });
+    const end = endOfWeek(endOfMonth(viewMonth), { weekStartsOn: 1 });
+    return eachDayOfInterval({ start, end });
+  }, [viewMonth]);
+
+  // Jei pasikeičia pasirinkta data – sinchronizuojam rodomą mėnesį
+  useEffect(() => {
+    const d = parseISO(date);
+    setViewMonth(new Date(d.getFullYear(), d.getMonth(), 1));
+  }, [date]);
+
+  // --------- Užkrovimai ----------
   async function load() {
     const { data, error } = await supabase
       .from("appointments")
@@ -75,17 +102,13 @@ export default function DayView({ workspace }) {
       .order("start_time", { ascending: true });
     if (!error) setItems(data || []);
   }
+  useEffect(() => { load(); }, [date, workspace.id]);
 
-  useEffect(() => {
-    load();
-  }, [date, workspace.id]);
-
-  // paslaugos
   useEffect(() => {
     async function fetchServices() {
       const { data } = await supabase
         .from("services")
-        .select("*") // turi ateiti default_price
+        .select("*")
         .eq("workspace_id", workspace.id)
         .order("category", { ascending: true })
         .order("name", { ascending: true });
@@ -94,7 +117,6 @@ export default function DayView({ workspace }) {
     fetchServices();
   }, [workspace.id]);
 
-  // klientai (kiekvienąkart atidarius modalą arba keičiant paiešką)
   useEffect(() => {
     async function fetchClients() {
       let q = supabase
@@ -103,18 +125,17 @@ export default function DayView({ workspace }) {
         .eq("workspace_id", workspace.id)
         .order("name", { ascending: true })
         .limit(100);
-      if (clientSearch) q = q.ilike("name", `%${clientSearch}%`);
+    if (clientSearch) q = q.ilike("name", `%${clientSearch}%`);
       const { data } = await q;
       setClients(data || []);
     }
     fetchClients();
-  }, [clientSearch, workspace.id, addOpen]); // kai atidarom modalą – užsikraus
+  }, [clientSearch, workspace.id, addOpen]);
 
   const subservices = useMemo(
     () => services.filter((s) => s.category === addForm.category && !!s.name),
     [services, addForm.category]
   );
-
   const selectedAddService = useMemo(
     () => services.find((s) => s.id === addForm.serviceId) || null,
     [services, addForm.serviceId]
@@ -159,7 +180,7 @@ export default function DayView({ workspace }) {
   }
 
   async function remove(id) {
-    if (!confirm("Pašalinti įrašą?")) return;
+    if (!window.confirm("Pašalinti įrašą?")) return;
     const { error } = await supabase.from("appointments").delete().eq("id", id);
     if (error) return alert(error.message);
     await load();
@@ -171,7 +192,7 @@ export default function DayView({ workspace }) {
     setItems((prev) => prev.map((x) => (x.id === id ? { ...x, status } : x)));
   }
 
-  /** --------- Laisvi tarpai ---------- */
+  /** --------- Laisvi tarpai dienoje ---------- */
   const slots = useMemo(() => {
     const srt = [...items].sort((a, b) => (a.start_time < b.start_time ? -1 : 1));
     const res = [];
@@ -209,28 +230,20 @@ export default function DayView({ workspace }) {
       price: "",
       note: "",
     });
-    setAddPriceEdited(false); // naujas modalas – leisk autofill'ui veikti
+    setAddPriceEdited(false);
     setClientSearch("");
     setSelectedClientId(null);
     setAddOpen(true);
   }
 
-  // kai pasirenkama kita kategorija ar subpaslauga – leidžiam vėl autofill
-  useEffect(() => {
-    setAddPriceEdited(false);
-  }, [addForm.category, addForm.serviceId]);
-
-  // automatinis kainos užpildymas greito pridėjimo modale
+  // auto-kaina greitam pridėjimui
+  useEffect(() => { setAddPriceEdited(false); }, [addForm.category, addForm.serviceId]);
   useEffect(() => {
     if (addPriceEdited) return;
-
-    // 1) jei pasirinkta subpaslauga – imame jos default_price
     if (selectedAddService && selectedAddService.default_price != null) {
       setAddForm((f) => ({ ...f, price: String(selectedAddService.default_price) }));
       return;
     }
-
-    // 2) jei tik kategorija – ieškome kategorijos eilutės su tuščiu/NULL name
     if (!addForm.serviceId && addForm.category) {
       const catRow =
         services.find(
@@ -238,19 +251,15 @@ export default function DayView({ workspace }) {
             s.category === addForm.category &&
             (s.name == null || String(s.name).trim() === "")
         ) || null;
-
       if (catRow && catRow.default_price != null) {
         setAddForm((f) => ({ ...f, price: String(catRow.default_price) }));
-        return;
       }
     }
-    // jei neradome – paliekam esamą (gali būti tuščia)
   }, [addForm.category, addForm.serviceId, selectedAddService, services, addPriceEdited]);
 
   async function saveAdd() {
     if (!selectedClientId) return alert("Pasirinkite klientą arba sukurkite naują.");
     if (!addForm.category) return alert("Pasirinkite kategoriją.");
-    // Overlap tikrinimas
     const { data: overlaps } = await supabase
       .from("appointments")
       .select("id,start_time,end_time")
@@ -280,10 +289,7 @@ export default function DayView({ workspace }) {
   }
 
   async function createClient() {
-    if (!newClient.name.trim()) {
-      alert("Įveskite kliento vardą ir pavardę.");
-      return;
-    }
+    if (!newClient.name.trim()) return alert("Įveskite kliento vardą ir pavardę.");
     const payload = {
       name: newClient.name.trim(),
       phone: newClient.phone.trim() || null,
@@ -293,8 +299,6 @@ export default function DayView({ workspace }) {
     };
     const { data, error } = await supabase.from("clients").insert(payload).select().single();
     if (error) return alert(error.message);
-
-    // įdėti į listą ir pasirinkti
     setClients((prev) =>
       [...prev, data].sort((a, b) => a.name.localeCompare(b.name, "lt", { sensitivity: "base" }))
     );
@@ -303,15 +307,83 @@ export default function DayView({ workspace }) {
     setNewClient({ name: "", phone: "", email: "", gender: "female" });
   }
 
+  // --------- UI ----------
+  const monthLabel = viewMonth.toLocaleDateString("lt-LT", { month: "long", year: "numeric" });
+
   return (
-    <div className="bg-white rounded-2xl shadow p-4 sm:p-5">
-      <div className="flex items-center justify-between mb-4 gap-2">
-        <div className="text-lg font-semibold">Darbo grafikas</div>
-        <div className="w-56">
-          <DateField value={date} onChange={setDate} />
+    <div className="bg-white rounded-2xl shadow p-4 sm:p-5 space-y-4">
+      {/* Kalendorius (mėnesio tinklelis) */}
+      <div>
+        {/* Pavadinimas + mėnesio perjungimas KAIRĖJE */}
+        <div className="flex items-center mb-2">
+          <div className="text-lg font-semibold mr-3">Kalendorius</div>
+          <div className="flex items-center gap-2">
+            <button
+              className="px-3 py-2 rounded-xl border hover:bg-gray-50"
+              onClick={() => setViewMonth((d) => addMonths(d, -1))}
+              aria-label="Ankstesnis mėnuo"
+            >
+              ◀
+            </button>
+            <div className="min-w-[180px] text-center font-medium capitalize">
+              {monthLabel}
+            </div>
+            <button
+              className="px-3 py-2 rounded-xl border hover:bg-gray-50"
+              onClick={() => setViewMonth((d) => addMonths(d, 1))}
+              aria-label="Kitas mėnuo"
+            >
+              ▶
+            </button>
+          </div>
+        </div>
+
+        {/* Savaitės dienos */}
+        <div className="grid grid-cols-7 text-center text-xs mb-1">
+          {weekLabels.map((w, i) => (
+            <div
+              key={w}
+              className={"py-1 " + (i >= 5 ? "text-rose-600" : "text-gray-500")}
+            >
+              {w}
+            </div>
+          ))}
+        </div>
+
+        {/* Dienų tinklelis */}
+        <div className="grid grid-cols-7 gap-1 sm:gap-2">
+          {monthGridDays.map((d) => {
+            const isOtherMonth = !isSameMonth(d, viewMonth);
+            const dStr = format(d, "yyyy-MM-dd");
+            const isSelected = dStr === date;
+            const isToday = d.toDateString() === new Date().toDateString();
+            const isWeekend = d.getDay() === 6 || d.getDay() === 0; // Št / Sk
+
+            const cls =
+              "h-10 sm:h-12 rounded-xl border text-sm flex items-center justify-center " +
+              (isSelected
+                ? "bg-emerald-600 text-white border-emerald-600"
+                : isWeekend
+                ? "bg-rose-50 hover:bg-rose-100"
+                : "bg-white hover:bg-gray-50") +
+              (isOtherMonth ? " opacity-40" : "") +
+              (isToday && !isSelected ? " ring-1 ring-emerald-300" : "");
+
+            return (
+              <button key={dStr} onClick={() => setDate(dStr)} className={cls} title={dStr}>
+                {d.getDate()}
+              </button>
+            );
+          })}
         </div>
       </div>
 
+      {/* Pasirinktos dienos antraštė (be seno DateField) */}
+      <div className="text-base font-medium">
+        {new Date(date).toLocaleDateString("lt-LT", { year: "numeric", month: "long", day: "numeric" })}
+      </div>
+
+      {/* Dienos įrašų sąrašas su tarpais */}
       <div className="space-y-3">
         {slots.map((slot, i) =>
           slot.type === "gap" ? (
@@ -524,7 +596,7 @@ export default function DayView({ workspace }) {
                 value={addForm.price}
                 onChange={(e) => {
                   setAddForm((f) => ({ ...f, price: e.target.value }));
-                  setAddPriceEdited(true); // vartotojas koregavo kainą ranka
+                  setAddPriceEdited(true);
                 }}
                 placeholder="pvz. 35"
               />
