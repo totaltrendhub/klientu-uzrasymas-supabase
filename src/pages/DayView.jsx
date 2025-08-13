@@ -78,6 +78,19 @@ export default function DayView({ workspace }) {
     gender: "female",
   });
 
+  // trijų taškų meniu (kuriam įrašui atvertas)
+  const [menuOpenId, setMenuOpenId] = useState(null);
+  useEffect(() => {
+    const closeOnOutside = () => setMenuOpenId(null);
+    const closeOnEsc = (e) => e.key === "Escape" && setMenuOpenId(null);
+    window.addEventListener("click", closeOnOutside);
+    window.addEventListener("keydown", closeOnEsc);
+    return () => {
+      window.removeEventListener("click", closeOnOutside);
+      window.removeEventListener("keydown", closeOnEsc);
+    };
+  }, []);
+
   // --------- KALENDORIUS (mėnesio tinklelis) ----------
   const weekLabels = ["Pr", "An", "Tr", "Kt", "Pn", "Št", "Sk"];
   const monthGridDays = useMemo(() => {
@@ -125,7 +138,7 @@ export default function DayView({ workspace }) {
         .eq("workspace_id", workspace.id)
         .order("name", { ascending: true })
         .limit(100);
-    if (clientSearch) q = q.ilike("name", `%${clientSearch}%`);
+      if (clientSearch) q = q.ilike("name", `%${clientSearch}%`);
       const { data } = await q;
       setClients(data || []);
     }
@@ -143,6 +156,7 @@ export default function DayView({ workspace }) {
 
   function startEdit(a) {
     setEditingId(a.id);
+    setMenuOpenId(null);
     setEdit({
       date: a.date,
       start_time: t5(a.start_time),
@@ -190,6 +204,7 @@ export default function DayView({ workspace }) {
     const { error } = await supabase.from("appointments").update({ status }).eq("id", id);
     if (error) return alert(error.message);
     setItems((prev) => prev.map((x) => (x.id === id ? { ...x, status } : x)));
+    setMenuOpenId(null);
   }
 
   /** --------- Laisvi tarpai dienoje ---------- */
@@ -338,7 +353,7 @@ export default function DayView({ workspace }) {
           </div>
         </div>
 
-        {/* Savaitės dienos */}
+        {/* Savaitės dienos (Št/Sk – raudoni) */}
         <div className="grid grid-cols-7 text-center text-xs mb-1">
           {weekLabels.map((w, i) => (
             <div
@@ -350,14 +365,14 @@ export default function DayView({ workspace }) {
           ))}
         </div>
 
-        {/* Dienų tinklelis */}
+        {/* Dienų tinklelis (savaitgaliai – šviesiai raudoni) */}
         <div className="grid grid-cols-7 gap-1 sm:gap-2">
           {monthGridDays.map((d) => {
             const isOtherMonth = !isSameMonth(d, viewMonth);
             const dStr = format(d, "yyyy-MM-dd");
             const isSelected = dStr === date;
             const isToday = d.toDateString() === new Date().toDateString();
-            const isWeekend = d.getDay() === 6 || d.getDay() === 0; // Št / Sk
+            const isWeekend = d.getDay() === 6 || d.getDay() === 0;
 
             const cls =
               "h-10 sm:h-12 rounded-xl border text-sm flex items-center justify-center " +
@@ -389,21 +404,21 @@ export default function DayView({ workspace }) {
           slot.type === "gap" ? (
             <div
               key={`gap-${i}`}
-              className="p-4 border-2 border-dashed rounded-2xl bg-amber-50/60 text-amber-800 flex items-center justify-between"
+              className="p-3 sm:p-4 border-2 border-dashed rounded-2xl bg-amber-50/60 text-amber-800 flex items-center justify-between"
             >
-              <div className="font-medium">
+              <div className="font-medium text-sm sm:text-base">
                 Laisvas tarpas {slot.from}–{slot.to}{" "}
                 <span className="text-amber-700">• {diffMin(slot.from, slot.to)} min</span>
               </div>
               <button
                 onClick={() => openAdd(slot.from, slot.to)}
-                className="px-3 py-2 rounded-xl border hover:bg-amber-100"
+                className="px-3 py-2 rounded-xl border hover:bg-amber-100 text-sm"
               >
                 Pridėti rezervaciją
               </button>
             </div>
           ) : (
-            <div key={slot.data.id} className="p-4 border rounded-2xl">
+            <div key={slot.data.id} className="relative p-3 sm:p-4 border rounded-2xl">
               {editingId === slot.data.id ? (
                 <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
                   <div className="md:col-span-2">
@@ -446,36 +461,68 @@ export default function DayView({ workspace }) {
                   </div>
                 </div>
               ) : (
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                  <div className="flex-1">
-                    <div className="font-medium">
-                      {t5(slot.data.start_time)}–{t5(slot.data.end_time)} — {slot.data.clients?.name}{" "}
+                <>
+                  {/* viršutinė eilutė – kompaktiška */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-medium text-sm sm:text-base leading-tight truncate">
+                        {t5(slot.data.start_time)}–{t5(slot.data.end_time)} — {slot.data.clients?.name}
+                      </div>
+                      <div className="text-xs text-gray-600 truncate">
+                        {slot.data.services?.category || slot.data.category}
+                        {slot.data.services?.name ? " • " + slot.data.services.name : ""}{" "}
+                        {slot.data.price ? `• ${slot.data.price} €` : ""}
+                      </div>
+                      {slot.data.note && (
+                        <div className="text-xs text-gray-600 mt-1 line-clamp-2">{slot.data.note}</div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
                       <StatusPill status={slot.data.status} />
+                      {/* Trijų taškų meniu */}
+                      <button
+                        className="p-2 rounded-lg border hover:bg-gray-50 text-xl leading-none"
+                        onClick={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === slot.data.id ? null : slot.data.id); }}
+                        aria-label="Daugiau veiksmų"
+                      >
+                        ⋯
+                      </button>
                     </div>
-                    <div className="text-sm text-gray-600">
-                      {slot.data.services?.category || slot.data.category}
-                      {slot.data.services?.name ? " • " + slot.data.services.name : ""}{" "}
-                      {slot.data.price ? `• ${slot.data.price} €` : ""}
+                  </div>
+
+                  {/* Dropdown meniu */}
+                  {menuOpenId === slot.data.id && (
+                    <div
+                      className="absolute right-2 top-10 z-10 w-44 rounded-xl border bg-white shadow-lg p-1"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-sm"
+                        onClick={() => setStatus(slot.data.id, "attended")}
+                      >
+                        Atvyko
+                      </button>
+                      <button
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-sm"
+                        onClick={() => setStatus(slot.data.id, "no_show")}
+                      >
+                        Neatvyko
+                      </button>
+                      <button
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-sm"
+                        onClick={() => startEdit(slot.data)}
+                      >
+                        Redaguoti
+                      </button>
+                      <button
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-red-50 text-sm text-rose-600"
+                        onClick={() => remove(slot.data.id)}
+                      >
+                        Šalinti
+                      </button>
                     </div>
-                    {slot.data.note && (
-                      <div className="text-sm text-gray-600">Pastabos: {slot.data.note}</div>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button onClick={() => setStatus(slot.data.id, "attended")} className="px-3 py-2 rounded-xl border hover:bg-gray-50">
-                      Atvyko
-                    </button>
-                    <button onClick={() => setStatus(slot.data.id, "no_show")} className="px-3 py-2 rounded-xl border hover:bg-gray-50">
-                      Neatvyko
-                    </button>
-                    <button onClick={() => startEdit(slot.data)} className="px-3 py-2 rounded-xl border hover:bg-gray-50">
-                      Redaguoti
-                    </button>
-                    <button onClick={() => remove(slot.data.id)} className="px-3 py-2 rounded-xl border text-red-600 hover:bg-red-50">
-                      Šalinti
-                    </button>
-                  </div>
-                </div>
+                  )}
+                </>
               )}
             </div>
           )
