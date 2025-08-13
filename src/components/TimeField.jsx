@@ -1,7 +1,6 @@
 import React from "react";
 
 export default function TimeField({ value, onChange, step=1 }){
-  // value 'HH:MM'
   const [h, m] = value?.split(":").map(Number) ?? [0,0];
   const hours = Array.from({length:24}, (_,i)=>i);
   const minutes = Array.from({length: Math.ceil(60/step)}, (_,k)=>k*step);

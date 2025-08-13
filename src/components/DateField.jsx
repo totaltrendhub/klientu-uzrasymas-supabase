@@ -14,7 +14,7 @@ export default function DateField({ value, onChange }){
     return () => document.removeEventListener("mousedown", onClick);
   },[]);
 
-  const weekStartsOn = 1; // pirmadienis
+  const weekStartsOn = 1;
   const start = startOfWeek(startOfMonth(viewDate), { weekStartsOn, locale: lt });
   const end = endOfWeek(endOfMonth(viewDate), { weekStartsOn, locale: lt });
   const days = [];

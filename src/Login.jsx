@@ -23,7 +23,6 @@ export default function Login() {
         <button disabled={loading} className="w-full bg-emerald-600 text-white rounded-xl px-3 py-2 hover:bg-emerald-700">
           {loading ? "Jungiamasi..." : "Prisijungti"}
         </button>
-        <p className="text-xs text-gray-500">Paskyras kurkite Supabase &rarr; Authentication &rarr; Users.</p>
       </form>
     </div>
   );
