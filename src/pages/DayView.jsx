@@ -18,7 +18,6 @@ import Modal from "../components/Modal";
 
 const WORK_START = "09:00";
 const WORK_END = "19:00";
-const DEFAULT_SVC_COLOR = "#e5e7eb"; // <- pilka (tailwind gray-300)
 
 const t5 = (s) => s?.slice(0, 5) || "";
 const toMin = (t) => {
@@ -27,6 +26,9 @@ const toMin = (t) => {
 };
 const lt = (a, b) => toMin(a) < toMin(b);
 const diffMin = (a, b) => toMin(b) - toMin(a);
+
+// „Default“ pilka spalva, kai kategorijos spalva neparinkta
+const DEFAULT_COLOR = "#e5e7eb";
 
 function StatusPill({ status }) {
   const map = {
@@ -45,20 +47,19 @@ function StatusPill({ status }) {
 export default function DayView({ workspace }) {
   // Pasirinkta diena
   const [date, setDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
-  // Mėnuo kalendoriuje
+  // Mėnuo rodomas kalendoriuje
   const [viewMonth, setViewMonth] = useState(() => new Date());
-  // Įrašai
   const [items, setItems] = useState([]);
 
-  // Redagavimas
+  // redagavimas
   const [editingId, setEditingId] = useState(null);
   const [edit, setEdit] = useState({ date: "", start_time: "", end_time: "", price: "", note: "" });
 
-  // Paslaugos (greitam pridėjimui)
+  // paslaugos/kategorijos (greitam pridėjimui)
   const [services, setServices] = useState([]);
   const categories = useMemo(() => Array.from(new Set(services.map((s) => s.category))), [services]);
 
-  // Pridėti iš tarpo
+  // „pridėti iš tarpo“ modalas
   const [addOpen, setAddOpen] = useState(false);
   const [addForm, setAddForm] = useState({
     start: "",
@@ -70,24 +71,25 @@ export default function DayView({ workspace }) {
   });
   const [addPriceEdited, setAddPriceEdited] = useState(false);
 
-  // Klientai (greitam pridėjimui)
+  // klientai greitam pridėjimui
   const [clients, setClients] = useState([]);
   const [clientSearch, setClientSearch] = useState("");
   const [selectedClientId, setSelectedClientId] = useState(null);
 
-  // Naujas klientas (submodalas)
+  // „Naujas klientas“ mini forma modale
   const [newClientOpen, setNewClientOpen] = useState(false);
-  const [newClient, setNewClient] = useState({ name: "", phone: "", email: "", gender: "female" });
+  const [newClient, setNewClient] = useState({
+    name: "",
+    phone: "",
+    email: "",
+    gender: "female",
+  });
 
   // 3 taškų meniu
   const [menuOpenId, setMenuOpenId] = useState(null);
-
-  // Išplėstas (detalių) rodinys kortelei
-  const [expandedId, setExpandedId] = useState(null);
-
   useEffect(() => {
     const closeOnOutside = () => setMenuOpenId(null);
-    const closeOnEsc = (e) => e.key === "Escape" && (setMenuOpenId(null), setExpandedId(null));
+    const closeOnEsc = (e) => e.key === "Escape" && setMenuOpenId(null);
     window.addEventListener("click", closeOnOutside);
     window.addEventListener("keydown", closeOnEsc);
     return () => {
@@ -113,7 +115,6 @@ export default function DayView({ workspace }) {
   async function load() {
     const { data, error } = await supabase
       .from("appointments")
-      // parsinešam ir services.color (kategorijos / subkategorijos spalvai)
       .select("*, clients(name, phone), services(name, category, color)")
       .eq("workspace_id", workspace.id)
       .eq("date", date)
@@ -162,7 +163,6 @@ export default function DayView({ workspace }) {
   function startEdit(a) {
     setEditingId(a.id);
     setMenuOpenId(null);
-    setExpandedId(a.id); // atidarom detales redaguojamam, kad aiškiau
     setEdit({
       date: a.date,
       start_time: t5(a.start_time),
@@ -422,12 +422,16 @@ export default function DayView({ workspace }) {
             <div
               key={slot.data.id}
               className="relative p-2 sm:p-4 border rounded-2xl"
-              style={
-                slot.data.services?.color
-                  ? { borderLeftWidth: 6, borderLeftColor: slot.data.services.color }
-                  : {}
-              }
             >
+              {/* SPALVOS JUOSTA iš kategorijos spalvos */}
+              <div
+                className="absolute left-0 top-0 bottom-0 rounded-l-2xl"
+                style={{
+                  width: "6px",
+                  backgroundColor:
+                    slot.data.services?.color ? String(slot.data.services.color) : DEFAULT_COLOR,
+                }}
+              />
               {editingId === slot.data.id ? (
                 <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
                   <div className="md:col-span-2">
@@ -471,30 +475,27 @@ export default function DayView({ workspace }) {
                 </div>
               ) : (
                 <>
-                  {/* Collapsed eilutė: tik pradžios laikas + klientas + paslauga */}
-                  <div
-                    className="flex items-start justify-between gap-1 sm:gap-2 cursor-pointer"
-                    onClick={(e) => { e.stopPropagation(); setExpandedId(expandedId === slot.data.id ? null : slot.data.id); }}
-                  >
+                  <div className="flex items-start justify-between gap-1 sm:gap-2">
                     <div className="min-w-0">
+                      {/* RODOM TIK PRADŽIOS LAIKĄ */}
                       <div className="font-medium text-[13px] sm:text-base leading-tight truncate">
-                        {/* TIK PRADŽIOS LAIKAS */}
                         {t5(slot.data.start_time)} — {slot.data.clients?.name}
                       </div>
-                      <div className="text-[12px] text-gray-600 truncate flex items-center gap-1">
-                        {/* kategorijos spalvos taškas (jei yra) */}
-                        {slot.data.services?.color && (
-                          <span
-                            className="inline-block w-2.5 h-2.5 rounded-full"
-                            style={{ backgroundColor: slot.data.services.color }}
-                          />
-                        )}
+                      <div className="text-[12px] text-gray-600 truncate flex items-center gap-1.5">
+                        {/* mažas spalvos taškas */}
+                        <span
+                          className="inline-block w-2 h-2 rounded-full"
+                          style={{ backgroundColor: slot.data.services?.color ? String(slot.data.services.color) : DEFAULT_COLOR }}
+                        />
                         <span className="truncate">
                           {slot.data.services?.category || slot.data.category}
                           {slot.data.services?.name ? " • " + slot.data.services.name : ""}{" "}
                           {slot.data.price ? `• ${slot.data.price} €` : ""}
                         </span>
                       </div>
+                      {slot.data.note && (
+                        <div className="text-[12px] text-gray-600 mt-0.5 line-clamp-1 sm:line-clamp-2">{slot.data.note}</div>
+                      )}
                     </div>
                     <div className="flex items-center gap-1 sm:gap-2 shrink-0">
                       <StatusPill status={slot.data.status} />
@@ -508,28 +509,15 @@ export default function DayView({ workspace }) {
                     </div>
                   </div>
 
-                  {/* Išplėstos detalės: tik jei atidaryta */}
-                  {expandedId === slot.data.id && (
-                    <div className="mt-2 text-[12px] sm:text-sm text-gray-700 space-y-1" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">Laikas:</span>
-                        <span>{t5(slot.data.start_time)}–{t5(slot.data.end_time)}</span>
-                      </div>
-                      {slot.data.note && (
-                        <div>
-                          <span className="font-medium">Pastabos:</span>{" "}
-                          <span className="whitespace-pre-wrap">{slot.data.note}</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* 3-taškų meniu */}
+                  {/* atsidarius kortelei galima rodyti pilną intervalą (jei reikės – dabar laikom kompaktiškai) */}
                   {menuOpenId === slot.data.id && (
                     <div
                       className="absolute right-2 top-9 sm:top-10 z-10 w-40 sm:w-44 rounded-xl border bg-white shadow-lg p-1"
                       onClick={(e) => e.stopPropagation()}
                     >
+                      <div className="px-3 py-1 text-xs text-gray-500">
+                        {t5(slot.data.start_time)}–{t5(slot.data.end_time)}
+                      </div>
                       <button className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-sm" onClick={() => setStatus(slot.data.id, "attended")}>
                         Atvyko
                       </button>
@@ -563,114 +551,127 @@ export default function DayView({ workspace }) {
           </div>
         }
       >
-        <div className="space-y-3 sm:space-y-4">
-          {/* Klientas */}
-          <div>
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-gray-600 mb-1">Klientas</div>
-              <button className="text-sm px-2 py-1 rounded-lg border" onClick={() => setNewClientOpen(true)}>
-                Naujas klientas
-              </button>
-            </div>
-            <input
-              className="w-full px-3 py-2 rounded-xl border"
-              placeholder="Paieška pagal vardą"
-              value={clientSearch}
-              onChange={(e) => setClientSearch(e.target.value)}
-            />
-            <div className="max-h-48 overflow-auto mt-2 border rounded-2xl divide-y">
-              {clients.map((c) => {
-                const sel = selectedClientId === c.id;
-                return (
-                  <button
-                    key={c.id}
-                    onClick={() => setSelectedClientId(c.id)}
-                    className={`w-full text-left px-3 py-2 ${sel ? "bg-emerald-50 border-l-4 border-emerald-500" : "hover:bg-gray-50"}`}
-                  >
-                    <div className={`font-medium ${sel ? "text-emerald-700" : ""}`}>{c.name}</div>
-                    <div className="text-xs text-gray-600">{c.phone || "—"} {c.email ? "• " + c.email : ""}</div>
-                  </button>
-                );
-              })}
-              {clients.length === 0 && <div className="px-3 py-2 text-sm text-gray-500">Nėra įrašų.</div>}
-            </div>
+        {/* VIDINIS SCROLL'AS + sticky X mygtukas mobilui */}
+        <div className="max-h-[70vh] overflow-y-auto pr-1">
+          <div className="md:hidden sticky top-0 z-10 flex justify-end -mt-2 -mr-2">
+            <button
+              onClick={() => setAddOpen(false)}
+              className="m-2 px-2 py-1 rounded-lg border bg-white"
+              aria-label="Uždaryti"
+            >
+              ✕
+            </button>
           </div>
 
-          {/* Paslauga */}
-          <div>
-            <div className="text-sm text-gray-600 mb-1">Kategorija</div>
-            <div className="flex flex-wrap gap-1.5 sm:gap-2">
-              {categories.map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setAddForm((f) => ({ ...f, category: cat, serviceId: null }))}
-                  className={
-                    "inline-flex items-center px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl border whitespace-nowrap text-sm " +
-                    (addForm.category === cat
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : "bg-white hover:bg-gray-50")
-                  }
-                >
-                  {cat}
+          <div className="space-y-3 sm:space-y-4">
+            {/* Klientas */}
+            <div>
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-gray-600 mb-1">Klientas</div>
+                <button className="text-sm px-2 py-1 rounded-lg border" onClick={() => setNewClientOpen(true)}>
+                  Naujas klientas
                 </button>
-              ))}
-            </div>
-
-            {addForm.category && (
-              <div className="mt-2 md:w-1/2">
-                {subservices.length > 0 ? (
-                  <>
-                    <div className="text-sm text-gray-600 mb-1">Tikslesnė paslauga (nebūtina)</div>
-                    <select
-                      className="w-full px-3 py-2 rounded-xl border"
-                      value={addForm.serviceId || ""}
-                      onChange={(e) => setAddForm((f) => ({ ...f, serviceId: e.target.value || null }))}
-                    >
-                      <option value="">— Tik kategorija —</option>
-                      {subservices.map((s) => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                      ))}
-                    </select>
-                  </>
-                ) : (
-                  <div className="text-sm text-gray-600">Ši kategorija neturi subpaslaugų — bus naudojama tik kategorija.</div>
-                )}
               </div>
-            )}
-          </div>
-
-          {/* Laikas / Kaina / Pastabos */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 sm:gap-4">
-            <div>
-              <div className="text-sm text-gray-600 mb-1">Nuo</div>
-              <TimeField value={addForm.start} onChange={(v) => setAddForm((f) => ({ ...f, start: v }))} step={1} />
-            </div>
-            <div>
-              <div className="text-sm text-gray-600 mb-1">Iki</div>
-              <TimeField value={addForm.end} onChange={(v) => setAddForm((f) => ({ ...f, end: v }))} step={1} />
-            </div>
-            <div>
-              <div className="text-sm text-gray-600 mb-1">Kaina (€)</div>
               <input
-                type="number"
-                step="0.01"
                 className="w-full px-3 py-2 rounded-xl border"
-                value={addForm.price}
-                onChange={(e) => {
-                  setAddForm((f) => ({ ...f, price: e.target.value }));
-                  setAddPriceEdited(true);
-                }}
-                placeholder="pvz. 35"
+                placeholder="Paieška pagal vardą"
+                value={clientSearch}
+                onChange={(e) => setClientSearch(e.target.value)}
               />
+              <div className="max-h-48 overflow-auto mt-2 border rounded-2xl divide-y">
+                {clients.map((c) => {
+                  const sel = selectedClientId === c.id;
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => setSelectedClientId(c.id)}
+                      className={`w-full text-left px-3 py-2 ${sel ? "bg-emerald-50 border-l-4 border-emerald-500" : "hover:bg-gray-50"}`}
+                    >
+                      <div className={`font-medium ${sel ? "text-emerald-700" : ""}`}>{c.name}</div>
+                      <div className="text-xs text-gray-600">{c.phone || "—"} {c.email ? "• " + c.email : ""}</div>
+                    </button>
+                  );
+                })}
+                {clients.length === 0 && <div className="px-3 py-2 text-sm text-gray-500">Nėra įrašų.</div>}
+              </div>
             </div>
-            <div className="md:col-span-4">
-              <div className="text-sm text-gray-600 mb-1">Pastabos</div>
-              <textarea
-                rows={2}
-                className="w-full px-3 py-2 rounded-xl border"
-                value={addForm.note}
-                onChange={(e) => setAddForm((f) => ({ ...f, note: e.target.value }))}
-              />
+
+            {/* Paslauga */}
+            <div>
+              <div className="text-sm text-gray-600 mb-1">Kategorija</div>
+              <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                {categories.map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setAddForm((f) => ({ ...f, category: cat, serviceId: null }))}
+                    className={
+                      "inline-flex items-center px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl border whitespace-nowrap text-sm " +
+                      (addForm.category === cat
+                        ? "bg-emerald-600 text-white border-emerald-600"
+                        : "bg-white hover:bg-gray-50")
+                    }
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+
+              {addForm.category && (
+                <div className="mt-2 md:w-1/2">
+                  {subservices.length > 0 ? (
+                    <>
+                      <div className="text-sm text-gray-600 mb-1">Tikslesnė paslauga (nebūtina)</div>
+                      <select
+                        className="w-full px-3 py-2 rounded-xl border"
+                        value={addForm.serviceId || ""}
+                        onChange={(e) => setAddForm((f) => ({ ...f, serviceId: e.target.value || null }))}
+                      >
+                        <option value="">— Tik kategorija —</option>
+                        {subservices.map((s) => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </select>
+                    </>
+                  ) : (
+                    <div className="text-sm text-gray-600">Ši kategorija neturi subpaslaugų — bus naudojama tik kategorija.</div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Laikas / Kaina / Pastabos */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 sm:gap-4">
+              <div>
+                <div className="text-sm text-gray-600 mb-1">Nuo</div>
+                <TimeField value={addForm.start} onChange={(v) => setAddForm((f) => ({ ...f, start: v }))} step={1} />
+              </div>
+              <div>
+                <div className="text-sm text-gray-600 mb-1">Iki</div>
+                <TimeField value={addForm.end} onChange={(v) => setAddForm((f) => ({ ...f, end: v }))} step={1} />
+              </div>
+              <div>
+                <div className="text-sm text-gray-600 mb-1">Kaina (€)</div>
+                <input
+                  type="number"
+                  step="0.01"
+                  className="w-full px-3 py-2 rounded-xl border"
+                  value={addForm.price}
+                  onChange={(e) => {
+                    setAddForm((f) => ({ ...f, price: e.target.value }));
+                    setAddPriceEdited(true);
+                  }}
+                  placeholder="pvz. 35"
+                />
+              </div>
+              <div className="md:col-span-4">
+                <div className="text-sm text-gray-600 mb-1">Pastabos</div>
+                <textarea
+                  rows={2}
+                  className="w-full px-3 py-2 rounded-xl border"
+                  value={addForm.note}
+                  onChange={(e) => setAddForm((f) => ({ ...f, note: e.target.value }))}
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -688,18 +689,20 @@ export default function DayView({ workspace }) {
           </div>
         }
       >
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <input className="px-3 py-2 rounded-xl border" placeholder="Vardas ir pavardė"
-                 value={newClient.name} onChange={(e) => setNewClient({ ...newClient, name: e.target.value })}/>
-          <input className="px-3 py-2 rounded-xl border" placeholder="Telefonas"
-                 value={newClient.phone} onChange={(e) => setNewClient({ ...newClient, phone: e.target.value })}/>
-          <input className="px-3 py-2 rounded-xl border" placeholder="El. paštas"
-                 value={newClient.email} onChange={(e) => setNewClient({ ...newClient, email: e.target.value })}/>
-          <select className="px-3 py-2 rounded-xl border" value={newClient.gender}
-                  onChange={(e) => setNewClient({ ...newClient, gender: e.target.value })}>
-            <option value="female">Moteris</option>
-            <option value="male">Vyras</option>
-          </select>
+        <div className="max-h-[70vh] overflow-y-auto pr-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input className="px-3 py-2 rounded-xl border" placeholder="Vardas ir pavardė"
+                   value={newClient.name} onChange={(e) => setNewClient({ ...newClient, name: e.target.value })}/>
+            <input className="px-3 py-2 rounded-xl border" placeholder="Telefonas"
+                   value={newClient.phone} onChange={(e) => setNewClient({ ...newClient, phone: e.target.value })}/>
+            <input className="px-3 py-2 rounded-xl border" placeholder="El. paštas"
+                   value={newClient.email} onChange={(e) => setNewClient({ ...newClient, email: e.target.value })}/>
+            <select className="px-3 py-2 rounded-xl border" value={newClient.gender}
+                    onChange={(e) => setNewClient({ ...newClient, gender: e.target.value })}>
+              <option value="female">Moteris</option>
+              <option value="male">Vyras</option>
+            </select>
+          </div>
         </div>
       </Modal>
     </div>
