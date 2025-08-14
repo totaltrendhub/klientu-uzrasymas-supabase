@@ -55,6 +55,9 @@ export default function DayView({ workspace }) {
   const [editingId, setEditingId] = useState(null);
   const [edit, setEdit] = useState({ date: "", start_time: "", end_time: "", price: "", note: "" });
 
+  // atverta (expanded) kortelė
+  const [expandedId, setExpandedId] = useState(null);
+
   // paslaugos/kategorijos (greitam pridėjimui)
   const [services, setServices] = useState([]);
   const categories = useMemo(() => Array.from(new Set(services.map((s) => s.category))), [services]);
@@ -173,6 +176,7 @@ export default function DayView({ workspace }) {
   function startEdit(a) {
     setEditingId(a.id);
     setMenuOpenId(null);
+    setExpandedId(a.id); // atsidarom kortelę redagavimui
     setEdit({
       date: a.date,
       start_time: t5(a.start_time),
@@ -431,13 +435,17 @@ export default function DayView({ workspace }) {
           ) : (
             <div
               key={slot.data.id}
-              className="relative p-2 sm:p-4 border rounded-2xl"
+              className={`relative p-2 sm:p-4 border rounded-2xl cursor-pointer ${expandedId === slot.data.id ? "bg-gray-50" : ""}`}
+              onClick={() =>
+                setExpandedId((prev) => (prev === slot.data.id ? null : slot.data.id))
+              }
             >
               {/* SPALVOS JUOSTA (subkategorijos arba kategorijos spalva, kitaip pilka) */}
               <div
                 className="absolute left-0 top-0 bottom-0 rounded-l-2xl"
                 style={{ width: "6px", backgroundColor: colorForAppt(slot.data) }}
               />
+
               {editingId === slot.data.id ? (
                 <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
                   <div className="md:col-span-2">
@@ -474,7 +482,7 @@ export default function DayView({ workspace }) {
                     <button onClick={() => saveEdit(slot.data.id)} className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm">
                       Išsaugoti
                     </button>
-                    <button onClick={() => setEditingId(null)} className="px-3 py-2 rounded-xl border text-sm">
+                    <button onClick={(e) => { e.stopPropagation(); setEditingId(null); }} className="px-3 py-2 rounded-xl border text-sm">
                       Atšaukti
                     </button>
                   </div>
@@ -483,12 +491,11 @@ export default function DayView({ workspace }) {
                 <>
                   <div className="flex items-start justify-between gap-1 sm:gap-2">
                     <div className="min-w-0">
-                      {/* RODOM TIK PRADŽIOS LAIKĄ */}
+                      {/* Sąraše rodom TIK PRADŽIOS LAIKĄ */}
                       <div className="font-medium text-[13px] sm:text-base leading-tight truncate">
                         {t5(slot.data.start_time)} — {slot.data.clients?.name}
                       </div>
                       <div className="text-[12px] text-gray-600 truncate flex items-center gap-1.5">
-                        {/* mažas spalvos taškas */}
                         <span
                           className="inline-block w-2 h-2 rounded-full"
                           style={{ backgroundColor: colorForAppt(slot.data) }}
@@ -499,10 +506,16 @@ export default function DayView({ workspace }) {
                           {slot.data.price ? `• ${slot.data.price} €` : ""}
                         </span>
                       </div>
-                      {slot.data.note && (
-                        <div className="text-[12px] text-gray-600 mt-0.5 line-clamp-1 sm:line-clamp-2">{slot.data.note}</div>
+
+                      {/* Pilnas intervalas ir pastabos – tik ATVERTUS kortelę */}
+                      {expandedId === slot.data.id && (
+                        <div className="mt-1 text-[12px] text-gray-700 space-y-1">
+                          <div>{t5(slot.data.start_time)}–{t5(slot.data.end_time)}</div>
+                          {slot.data.note && <div className="whitespace-pre-wrap">{slot.data.note}</div>}
+                        </div>
                       )}
                     </div>
+
                     <div className="flex items-center gap-1 sm:gap-2 shrink-0">
                       <StatusPill status={slot.data.status} />
                       <button
@@ -515,15 +528,12 @@ export default function DayView({ workspace }) {
                     </div>
                   </div>
 
-                  {/* Meniu su pilnu laiko intervalu */}
+                  {/* Meniu – be intervalo (intervalas matomas atvertus kortelę) */}
                   {menuOpenId === slot.data.id && (
                     <div
                       className="absolute right-2 top-9 sm:top-10 z-10 w-40 sm:w-44 rounded-xl border bg-white shadow-lg p-1"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <div className="px-3 py-1 text-xs text-gray-500">
-                        {t5(slot.data.start_time)}–{t5(slot.data.end_time)}
-                      </div>
                       <button className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-sm" onClick={() => setStatus(slot.data.id, "attended")}>
                         Atvyko
                       </button>
