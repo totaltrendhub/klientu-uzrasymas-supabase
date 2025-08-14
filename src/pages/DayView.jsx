@@ -1,5 +1,5 @@
 // src/pages/DayView.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   format,
   startOfMonth,
@@ -30,6 +30,9 @@ const diffMin = (a, b) => toMin(b) - toMin(a);
 // „Default“ pilka spalva, kai kategorijos spalva neparinkta
 const DEFAULT_COLOR = "#e5e7eb";
 
+// sort helper
+const byStart = (a, b) => (a.start_time < b.start_time ? -1 : a.start_time > b.start_time ? 1 : 0);
+
 function StatusPill({ status }) {
   const map = {
     attended: { text: "Atvyko", cls: "bg-emerald-100 text-emerald-800" },
@@ -45,15 +48,36 @@ function StatusPill({ status }) {
 }
 
 export default function DayView({ workspace }) {
+  // UI pranešimai
+  const [msg, setMsg] = useState(null); // {type:'ok'|'error', text:string}
+  useEffect(() => {
+    if (!msg) return;
+    const t = setTimeout(() => setMsg(null), 4000);
+    return () => clearTimeout(t);
+  }, [msg]);
+
   // Pasirinkta diena
   const [date, setDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
   // Mėnuo rodomas kalendoriuje
   const [viewMonth, setViewMonth] = useState(() => new Date());
+
+  // Dienos įrašai
   const [items, setItems] = useState([]);
+  const [loadingItems, setLoadingItems] = useState(false);
 
   // redagavimas
   const [editingId, setEditingId] = useState(null);
-  const [edit, setEdit] = useState({ date: "", start_time: "", end_time: "", price: "", note: "" });
+  const [edit, setEdit] = useState({
+    date: "",
+    start_time: "",
+    end_time: "",
+    price: "",
+    note: "",
+    category: "",
+    serviceId: null,
+  });
+  const [editPriceEdited, setEditPriceEdited] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   // atverta (expanded) kortelė
   const [expandedId, setExpandedId] = useState(null);
@@ -73,10 +97,13 @@ export default function DayView({ workspace }) {
     note: "",
   });
   const [addPriceEdited, setAddPriceEdited] = useState(false);
+  const [savingAdd, setSavingAdd] = useState(false);
+  const addClientSearchRef = useRef(null);
 
   // klientai greitam pridėjimui
   const [clients, setClients] = useState([]);
   const [clientSearch, setClientSearch] = useState("");
+  const [debouncedClientSearch, setDebouncedClientSearch] = useState("");
   const [selectedClientId, setSelectedClientId] = useState(null);
 
   // „Naujas klientas“ mini forma modale
@@ -87,9 +114,12 @@ export default function DayView({ workspace }) {
     email: "",
     gender: "female",
   });
+  const [creatingClient, setCreatingClient] = useState(false);
 
   // 3 taškų meniu
   const [menuOpenId, setMenuOpenId] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
+  const [statusUpdatingId, setStatusUpdatingId] = useState(null);
   useEffect(() => {
     const closeOnOutside = () => setMenuOpenId(null);
     const closeOnEsc = (e) => e.key === "Escape" && setMenuOpenId(null);
@@ -116,28 +146,41 @@ export default function DayView({ workspace }) {
 
   /* ---- Užkrovimai ---- */
   async function load() {
+    setLoadingItems(true);
     const { data, error } = await supabase
       .from("appointments")
       .select("*, clients(name, phone), services(name, category, color)")
       .eq("workspace_id", workspace.id)
       .eq("date", date)
       .order("start_time", { ascending: true });
-    if (!error) setItems(data || []);
+    setLoadingItems(false);
+    if (error) {
+      setMsg({ type: "error", text: error.message });
+      return;
+    }
+    setItems(data || []);
   }
   useEffect(() => { load(); }, [date, workspace.id]);
 
   useEffect(() => {
     async function fetchServices() {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("services")
         .select("*")
         .eq("workspace_id", workspace.id)
         .order("category", { ascending: true })
         .order("name", { ascending: true });
+      if (error) { setMsg({ type: "error", text: error.message }); return; }
       setServices(data || []);
     }
     fetchServices();
   }, [workspace.id]);
+
+  // debounce klientų paieškai (vietinis, be papildomų failų)
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedClientSearch(clientSearch), 300);
+    return () => clearTimeout(t);
+  }, [clientSearch]);
 
   useEffect(() => {
     async function fetchClients() {
@@ -147,12 +190,13 @@ export default function DayView({ workspace }) {
         .eq("workspace_id", workspace.id)
         .order("name", { ascending: true })
         .limit(100);
-      if (clientSearch) q = q.ilike("name", `%${clientSearch}%`);
-      const { data } = await q;
+      if (debouncedClientSearch?.trim()) q = q.ilike("name", `%${debouncedClientSearch.trim()}%`);
+      const { data, error } = await q;
+      if (error) { setMsg({ type: "error", text: error.message }); return; }
       setClients(data || []);
     }
-    fetchClients();
-  }, [clientSearch, workspace.id, addOpen]);
+    if (addOpen) fetchClients();
+  }, [debouncedClientSearch, workspace.id, addOpen]);
 
   // ---- Spalvos logika: subkategorija -> kategorija (be name) -> pilka
   const colorForAppt = (a) => {
@@ -164,6 +208,7 @@ export default function DayView({ workspace }) {
     return catRow?.color ? String(catRow.color) : DEFAULT_COLOR;
   };
 
+  // Subpaslaugos "Pridėti" modale
   const subservices = useMemo(
     () => services.filter((s) => s.category === addForm.category && !!s.name),
     [services, addForm.category]
@@ -173,20 +218,72 @@ export default function DayView({ workspace }) {
     [services, addForm.serviceId]
   );
 
+  // Subpaslaugos redagavimo formoje
+  const editSubservices = useMemo(
+    () => services.filter((s) => s.category === edit.category && !!s.name),
+    [services, edit.category]
+  );
+  const selectedEditService = useMemo(
+    () => services.find((s) => s.id === edit.serviceId) || null,
+    [services, edit.serviceId]
+  );
+
   function startEdit(a) {
     setEditingId(a.id);
     setMenuOpenId(null);
-    setExpandedId(a.id); // atsidarom kortelę redagavimui
+    setExpandedId(a.id);
     setEdit({
       date: a.date,
       start_time: t5(a.start_time),
       end_time: t5(a.end_time),
       price: a.price ?? "",
       note: a.note ?? "",
+      category: a?.services?.category || a?.category || "",
+      serviceId: a?.service_id || null,
     });
+    setEditPriceEdited(false);
+  }
+
+  // – kai keičiasi kategorija/subpaslauga redagavimo formoje, leisti autofill'ui
+  useEffect(() => { setEditPriceEdited(false); }, [edit.category, edit.serviceId]);
+
+  // – pagrindinis kainos autofill redaguojant
+  useEffect(() => {
+    if (editPriceEdited) return;
+    if (selectedEditService && selectedEditService.default_price != null) {
+      setEdit((f) => ({ ...f, price: String(selectedEditService.default_price) }));
+      return;
+    }
+    if (!edit.serviceId && edit.category) {
+      const catRow =
+        services.find(
+          (s) =>
+            s.category === edit.category &&
+            (s.name == null || String(s.name).trim() === "")
+        ) || null;
+      if (catRow && catRow.default_price != null) {
+        setEdit((f) => ({ ...f, price: String(catRow.default_price) }));
+      }
+    }
+  }, [edit.category, edit.serviceId, selectedEditService, services, editPriceEdited]);
+
+  function validTimeRange(start, end) {
+    if (!start || !end) return false;
+    return toMin(start) < toMin(end);
   }
 
   async function saveEdit(id) {
+    if (savingEdit) return;
+    if (!validTimeRange(edit.start_time, edit.end_time)) {
+      setMsg({ type: "error", text: "Neteisingas laiko intervalas (Nuo < Iki)." });
+      return;
+    }
+    if (edit.price !== "" && Number(edit.price) < 0) {
+      setMsg({ type: "error", text: "Kaina negali būti neigiama." });
+      return;
+    }
+
+    // konfliktų patikra
     const { data: overlaps } = await supabase
       .from("appointments")
       .select("id,start_time,end_time")
@@ -195,41 +292,84 @@ export default function DayView({ workspace }) {
       .neq("id", id)
       .lt("start_time", edit.end_time + ":00")
       .gt("end_time", edit.start_time + ":00");
-    if ((overlaps || []).length > 0) return alert("Laikas kertasi su kitu įrašu.");
+    if ((overlaps || []).length > 0) {
+      setMsg({ type: "error", text: "Laikas kertasi su kitu įrašu." });
+      return;
+    }
 
-    const { error } = await supabase
-      .from("appointments")
-      .update({
-        date: edit.date,
-        start_time: edit.start_time + ":00",
-        end_time: edit.end_time + ":00",
-        price: edit.price === "" ? null : Number(edit.price),
-        note: edit.note,
-      })
-      .eq("id", id);
-    if (error) return alert(error.message);
+    const payload = {
+      date: edit.date,
+      start_time: edit.start_time + ":00",
+      end_time: edit.end_time + ":00",
+      price: edit.price === "" ? null : Number(edit.price),
+      note: edit.note,
+      category: edit.category || null,
+      service_id: edit.serviceId || null,
+    };
 
-    setEditingId(null);
-    await load();
+    try {
+      setSavingEdit(true);
+      // grąžinam atnaujintą eilutę su join'ais, kad iškart atsinaujintų UI be load()
+      const { data, error } = await supabase
+        .from("appointments")
+        .update(payload)
+        .eq("id", id)
+        .select("*, clients(name, phone), services(name, category, color)")
+        .single();
+      if (error) throw error;
+
+      setItems((prev) => {
+        const next = prev.map((x) => (x.id === id ? data : x)).sort(byStart);
+        return next;
+      });
+      setEditingId(null);
+      setMsg({ type: "ok", text: "Rezervacija atnaujinta." });
+    } catch (e) {
+      setMsg({ type: "error", text: e.message || "Nepavyko išsaugoti." });
+    } finally {
+      setSavingEdit(false);
+    }
   }
 
   async function remove(id) {
     if (!window.confirm("Pašalinti įrašą?")) return;
-    const { error } = await supabase.from("appointments").delete().eq("id", id);
-    if (error) return alert(error.message);
-    await load();
+    // Optimistic UI
+    setDeletingId(id);
+    const prev = items;
+    setItems((cur) => cur.filter((x) => x.id !== id));
+    try {
+      const { error } = await supabase.from("appointments").delete().eq("id", id);
+      if (error) throw error;
+      setMsg({ type: "ok", text: "Įrašas pašalintas." });
+    } catch (e) {
+      setItems(prev);
+      setMsg({ type: "error", text: e.message || "Nepavyko pašalinti." });
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   async function setStatus(id, status) {
-    const { error } = await supabase.from("appointments").update({ status }).eq("id", id);
-    if (error) return alert(error.message);
-    setItems((prev) => prev.map((x) => (x.id === id ? { ...x, status } : x)));
+    // Optimistic UI
+    setStatusUpdatingId(id);
+    const prev = items;
+    setItems((cur) => cur.map((x) => (x.id === id ? { ...x, status } : x)));
     setMenuOpenId(null);
+    try {
+      const { error } = await supabase.from("appointments").update({ status }).eq("id", id);
+      if (error) throw error;
+      setMsg({ type: "ok", text: "Statusas atnaujintas." });
+    } catch (e) {
+      setItems(prev);
+      setMsg({ type: "error", text: e.message || "Nepavyko atnaujinti statuso." });
+    } finally {
+      setStatusUpdatingId(null);
+    }
   }
 
   /* ---- Laisvi tarpai ---- */
   const slots = useMemo(() => {
-    const srt = [...items].sort((a, b) => (a.start_time < b.start_time ? -1 : 1));
+    const srt = [...items].sort(byStart);
     const res = [];
     let cur = WORK_START;
 
@@ -269,6 +409,8 @@ export default function DayView({ workspace }) {
     setClientSearch("");
     setSelectedClientId(null);
     setAddOpen(true);
+    // fokusas į paiešką
+    setTimeout(() => addClientSearchRef.current?.focus(), 0);
   }
 
   // auto-kaina greitam pridėjimui
@@ -292,9 +434,23 @@ export default function DayView({ workspace }) {
     }
   }, [addForm.category, addForm.serviceId, selectedAddService, services, addPriceEdited]);
 
+  function validAdd() {
+    if (!selectedClientId) return { ok: false, reason: "Pasirinkite klientą arba sukurkite naują." };
+    if (!addForm.category) return { ok: false, reason: "Pasirinkite kategoriją." };
+    if (!validTimeRange(addForm.start, addForm.end)) return { ok: false, reason: "Neteisingas laiko intervalas (Nuo < Iki)." };
+    if (addForm.price !== "" && Number(addForm.price) < 0) return { ok: false, reason: "Kaina negali būti neigiama." };
+    return { ok: true };
+  }
+
   async function saveAdd() {
-    if (!selectedClientId) return alert("Pasirinkite klientą arba sukurkite naują.");
-    if (!addForm.category) return alert("Pasirinkite kategoriją.");
+    if (savingAdd) return;
+    const v = validAdd();
+    if (!v.ok) {
+      setMsg({ type: "error", text: v.reason });
+      return;
+    }
+
+    // konfliktų patikra
     const { data: overlaps } = await supabase
       .from("appointments")
       .select("id,start_time,end_time")
@@ -302,7 +458,10 @@ export default function DayView({ workspace }) {
       .eq("date", date)
       .lt("start_time", addForm.end + ":00")
       .gt("end_time", addForm.start + ":00");
-    if ((overlaps || []).length > 0) return alert("Laikas kertasi su kitu įrašu.");
+    if ((overlaps || []).length > 0) {
+      setMsg({ type: "error", text: "Laikas kertasi su kitu įrašu." });
+      return;
+    }
 
     const payload = {
       workspace_id: workspace.id,
@@ -316,15 +475,37 @@ export default function DayView({ workspace }) {
       note: addForm.note || null,
       status: "scheduled",
     };
-    const { error } = await supabase.from("appointments").insert(payload);
-    if (error) return alert(error.message);
 
-    setAddOpen(false);
-    await load();
+    try {
+      setSavingAdd(true);
+      // grąžinam sukurtą eilutę su join'ais
+      const { data, error } = await supabase
+        .from("appointments")
+        .insert(payload)
+        .select("*, clients(name, phone), services(name, category, color)")
+        .single();
+      if (error) throw error;
+
+      setItems((prev) => {
+        const next = [...prev, data].sort(byStart);
+        return next;
+      });
+
+      setMsg({ type: "ok", text: "Rezervacija sukurta." });
+      setAddOpen(false);
+    } catch (e) {
+      setMsg({ type: "error", text: e.message || "Nepavyko sukurti." });
+    } finally {
+      setSavingAdd(false);
+    }
   }
 
   async function createClient() {
-    if (!newClient.name.trim()) return alert("Įveskite kliento vardą ir pavardę.");
+    if (creatingClient) return;
+    if (!newClient.name.trim()) {
+      setMsg({ type: "error", text: "Įveskite kliento vardą ir pavardę." });
+      return;
+    }
     const payload = {
       name: newClient.name.trim(),
       phone: newClient.phone.trim() || null,
@@ -332,20 +513,49 @@ export default function DayView({ workspace }) {
       gender: newClient.gender,
       workspace_id: workspace.id,
     };
-    const { data, error } = await supabase.from("clients").insert(payload).select().single();
-    if (error) return alert(error.message);
-    setClients((prev) =>
-      [...prev, data].sort((a, b) => a.name.localeCompare(b.name, "lt", { sensitivity: "base" }))
-    );
-    setSelectedClientId(data.id);
-    setNewClientOpen(false);
-    setNewClient({ name: "", phone: "", email: "", gender: "female" });
+    try {
+      setCreatingClient(true);
+      const { data, error } = await supabase.from("clients").insert(payload).select().single();
+      if (error) throw error;
+      setClients((prev) =>
+        [...prev, data].sort((a, b) => a.name.localeCompare(b.name, "lt", { sensitivity: "base" }))
+      );
+      setSelectedClientId(data.id);
+      setNewClientOpen(false);
+      setNewClient({ name: "", phone: "", email: "", gender: "female" });
+      setMsg({ type: "ok", text: "Klientas sukurtas." });
+    } catch (e) {
+      setMsg({ type: "error", text: e.message || "Nepavyko sukurti kliento." });
+    } finally {
+      setCreatingClient(false);
+    }
   }
 
   const monthLabel = viewMonth.toLocaleDateString("lt-LT", { month: "long", year: "numeric" });
 
+  // klaviatūra modaluose
+  const onAddKeyDown = (e) => {
+    if (e.key === "Escape") setAddOpen(false);
+    if (e.key === "Enter" && !savingAdd) {
+      e.preventDefault();
+      saveAdd();
+    }
+  };
+
   return (
     <div className="bg-white rounded-2xl shadow p-3 sm:p-5 space-y-2 sm:space-y-4">
+      {/* Pranešimai */}
+      {msg && (
+        <div
+          className={`px-3 py-2 rounded-xl text-sm ${
+            msg.type === "ok" ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
+          }`}
+          role="status"
+        >
+          {msg.text}
+        </div>
+      )}
+
       {/* Kalendorius */}
       <div>
         <div className="flex items-center mb-1 sm:mb-2">
@@ -415,7 +625,11 @@ export default function DayView({ workspace }) {
 
       {/* Dienos įrašai */}
       <div className="space-y-2 sm:space-y-3">
-        {slots.map((slot, i) =>
+        {loadingItems && (
+          <div className="p-2 sm:p-4 border rounded-2xl text-gray-500">Įkeliama...</div>
+        )}
+
+        {!loadingItems && slots.map((slot, i) =>
           slot.type === "gap" ? (
             <div
               key={`gap-${i}`}
@@ -428,6 +642,7 @@ export default function DayView({ workspace }) {
               <button
                 onClick={() => openAdd(slot.from, slot.to)}
                 className="px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl border hover:bg-amber-100 text-[13px] sm:text-sm"
+                aria-label="Pridėti rezervaciją"
               >
                 Pridėti
               </button>
@@ -435,7 +650,7 @@ export default function DayView({ workspace }) {
           ) : (
             <div
               key={slot.data.id}
-              className={`relative p-2 sm:p-4 border rounded-2xl cursor-pointer ${expandedId === slot.data.id ? "bg-gray-50" : ""}`}
+              className={`relative p-2 sm:p-4 border rounded-2xl cursor-pointer ${expandedId === slot.data.id ? "bg-gray-50" : ""} ${deletingId === slot.data.id ? "opacity-50" : ""}`}
               onClick={() =>
                 setExpandedId((prev) => (prev === slot.data.id ? null : slot.data.id))
               }
@@ -444,54 +659,124 @@ export default function DayView({ workspace }) {
               <div
                 className="absolute left-0 top-0 bottom-0 rounded-l-2xl"
                 style={{ width: "6px", backgroundColor: colorForAppt(slot.data) }}
+                aria-hidden="true"
               />
 
               {editingId === slot.data.id ? (
-                <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
-                  <div className="md:col-span-2">
-                    <div className="text-[11px] text-gray-500">Data</div>
-                    <DateField value={edit.date} onChange={(v) => setEdit({ ...edit, date: v })} />
-                  </div>
+                <div className="space-y-3">
+                  {/* Kategorija + subpaslauga redagavimo formoje */}
                   <div>
-                    <div className="text-[11px] text-gray-500">Nuo</div>
-                    <TimeField value={edit.start_time} onChange={(v) => setEdit({ ...edit, start_time: v })} step={1} />
+                    <div className="text-[11px] text-gray-500 mb-1">Kategorija</div>
+                    <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                      {categories.map((cat) => (
+                        <button
+                          key={cat}
+                          onClick={() => {
+                            setEdit((f) => ({ ...f, category: cat, serviceId: null, price: "" }));
+                            setEditPriceEdited(false);
+                          }}
+                          className={
+                            "inline-flex items-center px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl border whitespace-nowrap text-sm " +
+                            (edit.category === cat
+                              ? "bg-emerald-600 text-white border-emerald-600"
+                              : "bg-white hover:bg-gray-50")
+                          }
+                          aria-label={`Kategorija ${cat}`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+
+                    {edit.category && (
+                      <div className="mt-2 md:w-1/2">
+                        {editSubservices.length > 0 ? (
+                          <>
+                            <div className="text-[11px] text-gray-500 mb-1">Tikslesnė paslauga (nebūtina)</div>
+                            <select
+                              className="w-full px-3 py-2 rounded-xl border text-sm"
+                              value={edit.serviceId || ""}
+                              onChange={(e) => {
+                                const v = e.target.value || null;
+                                setEdit((f) => ({ ...f, serviceId: v, price: "" }));
+                                setEditPriceEdited(false);
+                              }}
+                              aria-label="Subpaslauga"
+                            >
+                              <option value="">— Tik kategorija —</option>
+                              {editSubservices.map((s) => (
+                                <option key={s.id} value={s.id}>
+                                  {s.name}
+                                </option>
+                              ))}
+                            </select>
+                          </>
+                        ) : (
+                          <div className="text-[12px] text-gray-600">
+                            Ši kategorija neturi subpaslaugų — bus naudojama tik kategorija.
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <div>
-                    <div className="text-[11px] text-gray-500">Iki</div>
-                    <TimeField value={edit.end_time} onChange={(v) => setEdit({ ...edit, end_time: v })} step={1} />
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-gray-500">Kaina (€)</div>
-                    <input
-                      type="number"
-                      step="0.01"
-                      className="w-full px-2.5 py-2 rounded-xl border text-sm"
-                      value={edit.price}
-                      onChange={(e) => setEdit({ ...edit, price: e.target.value })}
-                    />
-                  </div>
-                  <div className="md:col-span-6">
-                    <div className="text-[11px] text-gray-500">Pastabos</div>
-                    <input
-                      className="w-full px-2.5 py-2 rounded-xl border text-sm"
-                      value={edit.note}
-                      onChange={(e) => setEdit({ ...edit, note: e.target.value })}
-                    />
-                  </div>
-                  <div className="flex gap-2 md:col-span-6">
-                    <button onClick={() => saveEdit(slot.data.id)} className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm">
-                      Išsaugoti
-                    </button>
-                    <button onClick={(e) => { e.stopPropagation(); setEditingId(null); }} className="px-3 py-2 rounded-xl border text-sm">
-                      Atšaukti
-                    </button>
+
+                  {/* Data/Laikas/Kaina/Pastabos */}
+                  <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+                    <div className="md:col-span-2">
+                      <div className="text-[11px] text-gray-500">Data</div>
+                      <DateField value={edit.date} onChange={(v) => setEdit({ ...edit, date: v })} />
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-gray-500">Nuo</div>
+                      <TimeField value={edit.start_time} onChange={(v) => setEdit({ ...edit, start_time: v })} step={1} />
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-gray-500">Iki</div>
+                      <TimeField value={edit.end_time} onChange={(v) => setEdit({ ...edit, end_time: v })} step={1} />
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-gray-500">Kaina (€)</div>
+                      <input
+                        type="number"
+                        step="0.01"
+                        className="w-full px-2.5 py-2 rounded-xl border text-sm"
+                        value={edit.price}
+                        onChange={(e) => {
+                          setEdit({ ...edit, price: e.target.value });
+                          setEditPriceEdited(true);
+                        }}
+                        min="0"
+                      />
+                    </div>
+                    <div className="md:col-span-6">
+                      <div className="text-[11px] text-gray-500">Pastabos</div>
+                      <input
+                        className="w-full px-2.5 py-2 rounded-xl border text-sm"
+                        value={edit.note}
+                        onChange={(e) => setEdit({ ...edit, note: e.target.value })}
+                      />
+                    </div>
+                    <div className="flex gap-2 md:col-span-6">
+                      <button
+                        onClick={() => saveEdit(slot.data.id)}
+                        className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm disabled:opacity-50"
+                        disabled={savingEdit}
+                      >
+                        {savingEdit ? "Saugoma..." : "Išsaugoti"}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setEditingId(null); }}
+                        className="px-3 py-2 rounded-xl border text-sm"
+                      >
+                        Atšaukti
+                      </button>
+                    </div>
                   </div>
                 </div>
               ) : (
                 <>
                   <div className="flex items-start justify-between gap-1 sm:gap-2">
                     <div className="min-w-0">
-                      {/* Sąraše rodom TIK PRADŽIOS LAIKĄ */}
                       <div className="font-medium text-[13px] sm:text-base leading-tight truncate">
                         {t5(slot.data.start_time)} — {slot.data.clients?.name}
                       </div>
@@ -499,6 +784,7 @@ export default function DayView({ workspace }) {
                         <span
                           className="inline-block w-2 h-2 rounded-full"
                           style={{ backgroundColor: colorForAppt(slot.data) }}
+                          aria-hidden="true"
                         />
                         <span className="truncate">
                           {slot.data.services?.category || slot.data.category}
@@ -507,7 +793,6 @@ export default function DayView({ workspace }) {
                         </span>
                       </div>
 
-                      {/* Pilnas intervalas ir pastabos – tik ATVERTUS kortelę */}
                       {expandedId === slot.data.id && (
                         <div className="mt-1 text-[12px] text-gray-700 space-y-1">
                           <div>{t5(slot.data.start_time)}–{t5(slot.data.end_time)}</div>
@@ -519,21 +804,24 @@ export default function DayView({ workspace }) {
                     <div className="flex items-center gap-1 sm:gap-2 shrink-0">
                       <StatusPill status={slot.data.status} />
                       <button
-                        className="p-1.5 sm:p-2 rounded-lg border hover:bg-gray-50 text-lg leading-none"
+                        className="p-1.5 sm:p-2 rounded-lg border hover:bg-gray-50 text-lg leading-none disabled:opacity-50"
                         onClick={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === slot.data.id ? null : slot.data.id); }}
                         aria-label="Daugiau veiksmų"
+                        disabled={statusUpdatingId === slot.data.id || deletingId === slot.data.id}
                       >
                         ⋯
                       </button>
                     </div>
                   </div>
 
-                  {/* Meniu – be intervalo (intervalas matomas atvertus kortelę) */}
                   {menuOpenId === slot.data.id && (
                     <div
                       className="absolute right-2 top-9 sm:top-10 z-10 w-40 sm:w-44 rounded-xl border bg-white shadow-lg p-1"
                       onClick={(e) => e.stopPropagation()}
                     >
+                      <button className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-sm" onClick={() => setStatus(slot.data.id, "scheduled")}>
+                        Suplanuota
+                      </button>
                       <button className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-sm" onClick={() => setStatus(slot.data.id, "attended")}>
                         Atvyko
                       </button>
@@ -543,7 +831,10 @@ export default function DayView({ workspace }) {
                       <button className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-sm" onClick={() => startEdit(slot.data)}>
                         Redaguoti
                       </button>
-                      <button className="w-full text-left px-3 py-2 rounded-lg hover:bg-red-50 text-sm text-rose-600" onClick={() => remove(slot.data.id)}>
+                      <button
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-red-50 text-sm text-rose-600"
+                        onClick={() => remove(slot.data.id)}
+                      >
                         Šalinti
                       </button>
                     </div>
@@ -552,6 +843,9 @@ export default function DayView({ workspace }) {
               )}
             </div>
           )
+        )}
+        {!loadingItems && slots.length === 0 && (
+          <div className="p-2 sm:p-4 border rounded-2xl text-gray-500">Šiai dienai įrašų nėra.</div>
         )}
       </div>
 
@@ -563,12 +857,17 @@ export default function DayView({ workspace }) {
         footer={
           <div className="flex gap-2 justify-end">
             <button className="px-3 py-2 rounded-xl border" onClick={() => setAddOpen(false)}>Atšaukti</button>
-            <button className="px-3 py-2 rounded-xl bg-emerald-600 text-white" onClick={saveAdd}>Išsaugoti</button>
+            <button
+              className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-50"
+              onClick={saveAdd}
+              disabled={savingAdd}
+            >
+              {savingAdd ? "Saugoma..." : "Išsaugoti"}
+            </button>
           </div>
         }
       >
-        {/* VIDINIS SCROLL'AS + sticky X mygtukas mobilui */}
-        <div className="max-h-[70vh] overflow-y-auto pr-1">
+        <div className="max-h-[70vh] overflow-y-auto pr-1" onKeyDown={onAddKeyDown}>
           <div className="md:hidden sticky top-0 z-10 flex justify-end -mt-2 -mr-2">
             <button
               onClick={() => setAddOpen(false)}
@@ -589,10 +888,12 @@ export default function DayView({ workspace }) {
                 </button>
               </div>
               <input
+                ref={addClientSearchRef}
                 className="w-full px-3 py-2 rounded-xl border"
                 placeholder="Paieška pagal vardą"
                 value={clientSearch}
                 onChange={(e) => setClientSearch(e.target.value)}
+                aria-label="Kliento paieška"
               />
               <div className="max-h-48 overflow-auto mt-2 border rounded-2xl divide-y">
                 {clients.map((c) => {
@@ -626,6 +927,7 @@ export default function DayView({ workspace }) {
                         ? "bg-emerald-600 text-white border-emerald-600"
                         : "bg-white hover:bg-gray-50")
                     }
+                    aria-label={`Kategorija ${cat}`}
                   >
                     {cat}
                   </button>
@@ -641,6 +943,7 @@ export default function DayView({ workspace }) {
                         className="w-full px-3 py-2 rounded-xl border"
                         value={addForm.serviceId || ""}
                         onChange={(e) => setAddForm((f) => ({ ...f, serviceId: e.target.value || null }))}
+                        aria-label="Subpaslauga"
                       >
                         <option value="">— Tik kategorija —</option>
                         {subservices.map((s) => (
@@ -677,6 +980,7 @@ export default function DayView({ workspace }) {
                     setAddPriceEdited(true);
                   }}
                   placeholder="pvz. 35"
+                  min="0"
                 />
               </div>
               <div className="md:col-span-4">
@@ -701,7 +1005,13 @@ export default function DayView({ workspace }) {
         footer={
           <div className="flex gap-2 justify-end">
             <button className="px-3 py-2 rounded-xl border" onClick={() => setNewClientOpen(false)}>Atšaukti</button>
-            <button className="px-3 py-2 rounded-xl bg-emerald-600 text-white" onClick={createClient}>Išsaugoti</button>
+            <button
+              className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-50"
+              onClick={createClient}
+              disabled={creatingClient}
+            >
+              {creatingClient ? "Saugoma..." : "Išsaugoti"}
+            </button>
           </div>
         }
       >
