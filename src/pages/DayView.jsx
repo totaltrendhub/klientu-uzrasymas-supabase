@@ -151,6 +151,16 @@ export default function DayView({ workspace }) {
     fetchClients();
   }, [clientSearch, workspace.id, addOpen]);
 
+  // ---- Spalvos logika: subkategorija -> kategorija (be name) -> pilka
+  const colorForAppt = (a) => {
+    if (a?.services?.color) return String(a.services.color);
+    const cat = a?.services?.category || a?.category || "";
+    const catRow = services.find(
+      (s) => s.category === cat && (s.name == null || String(s.name).trim() === "")
+    );
+    return catRow?.color ? String(catRow.color) : DEFAULT_COLOR;
+  };
+
   const subservices = useMemo(
     () => services.filter((s) => s.category === addForm.category && !!s.name),
     [services, addForm.category]
@@ -423,14 +433,10 @@ export default function DayView({ workspace }) {
               key={slot.data.id}
               className="relative p-2 sm:p-4 border rounded-2xl"
             >
-              {/* SPALVOS JUOSTA iš kategorijos spalvos */}
+              {/* SPALVOS JUOSTA (subkategorijos arba kategorijos spalva, kitaip pilka) */}
               <div
                 className="absolute left-0 top-0 bottom-0 rounded-l-2xl"
-                style={{
-                  width: "6px",
-                  backgroundColor:
-                    slot.data.services?.color ? String(slot.data.services.color) : DEFAULT_COLOR,
-                }}
+                style={{ width: "6px", backgroundColor: colorForAppt(slot.data) }}
               />
               {editingId === slot.data.id ? (
                 <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
@@ -485,7 +491,7 @@ export default function DayView({ workspace }) {
                         {/* mažas spalvos taškas */}
                         <span
                           className="inline-block w-2 h-2 rounded-full"
-                          style={{ backgroundColor: slot.data.services?.color ? String(slot.data.services.color) : DEFAULT_COLOR }}
+                          style={{ backgroundColor: colorForAppt(slot.data) }}
                         />
                         <span className="truncate">
                           {slot.data.services?.category || slot.data.category}
@@ -509,7 +515,7 @@ export default function DayView({ workspace }) {
                     </div>
                   </div>
 
-                  {/* atsidarius kortelei galima rodyti pilną intervalą (jei reikės – dabar laikom kompaktiškai) */}
+                  {/* Meniu su pilnu laiko intervalu */}
                   {menuOpenId === slot.data.id && (
                     <div
                       className="absolute right-2 top-9 sm:top-10 z-10 w-40 sm:w-44 rounded-xl border bg-white shadow-lg p-1"
