@@ -3,20 +3,31 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
 import Modal from "../components/Modal";
 
+const DEFAULT_GRAY = "#e5e7eb"; // pilka, kai color === null/tuščia
+
 export default function SettingsServices({ workspace }) {
   const [list, setList] = useState([]);
   const [q, setQ] = useState("");
   const [msg, setMsg] = useState(null); // {type:'ok'|'error', text:string}
 
-  // Kurti paslaugą (kategoriją + (nebūtinas) sąrašas subkategorijų)
+  // Kurti paslaugą (kategorija + (nebūtinas) sąrašas subkategorijų)
   const [createOpen, setCreateOpen] = useState(false);
   const [catName, setCatName] = useState("");
   const [categoryPrice, setCategoryPrice] = useState("");
-  const [rows, setRows] = useState([{ name: "", price: "" }]);
+  const [categoryColor, setCategoryColor] = useState(""); // tuščia = numatyta (pilka)
+  const [excludeFromStats, setExcludeFromStats] = useState(false);
+  const [rows, setRows] = useState([{ name: "", price: "", color: "" }]); // subkategorijos su savo (nebūtina) spalva
 
   // Redaguoti vieną įrašą
   const [editOpen, setEditOpen] = useState(false);
-  const [editForm, setEditForm] = useState({ id: null, category: "", name: "", price: "" });
+  const [editForm, setEditForm] = useState({
+    id: null,
+    category: "",
+    name: "",
+    price: "",
+    color: "",       // tuščia = numatyta (pilka)
+    exclude: false,
+  });
 
   async function load() {
     const { data, error } = await supabase
@@ -41,9 +52,13 @@ export default function SettingsServices({ workspace }) {
 
   /* ---------- Kurti paslaugą ---------- */
   function resetCreateForm() {
-    setCatName(""); setCategoryPrice(""); setRows([{ name: "", price: "" }]);
+    setCatName("");
+    setCategoryPrice("");
+    setCategoryColor(""); // grąžinam į numatytą (pilką)
+    setExcludeFromStats(false);
+    setRows([{ name: "", price: "", color: "" }]);
   }
-  function addRow() { setRows((r) => [...r, { name: "", price: "" }]); }
+  function addRow() { setRows((r) => [...r, { name: "", price: "", color: "" }]); }
   function removeRow(i) { setRows((r) => r.filter((_, idx) => idx !== i)); }
   function setRow(i, patch) { setRows((r) => r.map((row, idx) => (idx === i ? { ...row, ...patch } : row))); }
 
@@ -53,7 +68,7 @@ export default function SettingsServices({ workspace }) {
     if (!category) { setMsg({ type: "error", text: "Įrašykite kategorijos pavadinimą." }); return; }
 
     const subs = rows
-      .map((r) => ({ name: (r.name || "").trim(), price: r.price }))
+      .map((r) => ({ name: (r.name || "").trim(), price: r.price, color: (r.color || "").trim() }))
       .filter((r) => r.name.length > 0);
 
     const payloads = [];
@@ -64,6 +79,8 @@ export default function SettingsServices({ workspace }) {
         category,
         name: null,
         default_price: categoryPrice !== "" ? Number(categoryPrice) : null,
+        color: categoryColor || null, // jei tuščia – NULL (numatyta pilka)
+        exclude_from_stats: !!excludeFromStats,
       });
     } else {
       subs.forEach((r) => {
@@ -72,6 +89,9 @@ export default function SettingsServices({ workspace }) {
           category,
           name: r.name,
           default_price: r.price !== "" ? Number(r.price) : null,
+          // jei subkategorijai nenurodyta spalva – paveldi iš kategorijos; jei ir kategorijai tuščia – NULL
+          color: (r.color || categoryColor) || null,
+          exclude_from_stats: !!excludeFromStats, // subkategorijos paveldi vėliavą
         });
       });
     }
@@ -92,6 +112,8 @@ export default function SettingsServices({ workspace }) {
       category: svc.category || "",
       name: svc.name || "",
       price: svc.default_price ?? "",
+      color: svc.color || "", // laikom tuščią kaip „numatytą“
+      exclude: !!svc.exclude_from_stats,
     });
     setEditOpen(true);
   }
@@ -109,6 +131,8 @@ export default function SettingsServices({ workspace }) {
       category: editForm.category.trim(),
       name: editForm.name.trim() ? editForm.name.trim() : null,
       default_price: editForm.price !== "" ? Number(editForm.price) : null,
+      color: (editForm.color || "").trim() || null,  // tuščia -> NULL (numatyta pilka)
+      exclude_from_stats: !!editForm.exclude,
     };
 
     const { error } = await supabase.from("services").update(payload).eq("id", id);
@@ -144,12 +168,11 @@ export default function SettingsServices({ workspace }) {
 
   return (
     <div className="bg-white rounded-2xl shadow p-4 sm:p-5 space-y-4">
-      {/* Viršuje – paieška ir mygtukas */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
-        {/* Nebelieka „Nustatymai → Paslaugos“ */}
+        <div className="text-lg font-semibold">Paslaugos</div>
         <div className="flex gap-2">
           <input
-            className="border rounded-xl px-3 py-2 w-full sm:w-64"
+            className="border rounded-xl px-3 py-2"
             placeholder="Paieška"
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -162,27 +185,6 @@ export default function SettingsServices({ workspace }) {
           </button>
         </div>
       </div>
-
-      {/* Paprasta instrukcija */}
-<div className="rounded-2xl border p-4 bg-white text-gray-800">
-  <div className="font-medium mb-2">Kaip naudoti paslaugas?</div>
-  <ul className="list-disc pl-5 space-y-1 text-sm">
-    <li>
-      <b>Kategorija</b> – didelė grupė (pvz. <i>Konsultacija</i>, <i>Kirpimas</i>).
-      Jei kuri tik kategoriją, lauką <b>„Subkategorija“</b> palik tuščią.
-    </li>
-    <li>
-      <b>Subkategorija</b> – konkretus variantas (pvz. <i>Vyriškas</i>, <i>Balayage</i>).
-      Kiekvienas variantas – atskira eilutė.
-    </li>
-    <li>
-      <b>Numatyta kaina</b> – įrašyk ten, kur ji galioja. Rezervacijoje kaina
-      užsipildys automatiškai pagal pasirinktą subkategoriją arba, jei jos nėra,
-      pagal „tik kategoriją“.
-    </li>
-  </ul>
-</div>
-
 
       {msg && (
         <div className={`px-3 py-2 rounded-xl text-sm ${msg.type === "ok" ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
@@ -197,21 +199,33 @@ export default function SettingsServices({ workspace }) {
               <th className="p-2">Kategorija</th>
               <th className="p-2">Subkategorija</th>
               <th className="p-2">Kaina (numatyta)</th>
+              <th className="p-2">Žymės</th>
               <th className="p-2" />
             </tr>
           </thead>
           <tbody>
             {filtered.map((svc) => (
               <tr key={svc.id} className="border-t">
-                <td className="p-2">{svc.category}</td>
+                <td className="p-2">
+                  <span
+                    className="inline-block w-3 h-3 rounded-full mr-2 align-middle"
+                    style={{ backgroundColor: svc.color || DEFAULT_GRAY }}
+                    title={svc.color || "numatyta (pilka)"}
+                  />
+                  {svc.category}
+                </td>
                 <td className="p-2">{svc.name ?? "—"}</td>
                 <td className="p-2">{svc.default_price != null ? `${svc.default_price} €` : "—"}</td>
                 <td className="p-2">
+                  {svc.exclude_from_stats && (
+                    <span className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-700">
+                      neįtraukti į statistiką
+                    </span>
+                  )}
+                </td>
+                <td className="p-2">
                   <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => openEdit(svc)}
-                      className="px-3 py-1 rounded-xl border"
-                    >
+                    <button onClick={() => openEdit(svc)} className="px-3 py-1 rounded-xl border">
                       Koreguoti
                     </button>
                     <button
@@ -234,7 +248,7 @@ export default function SettingsServices({ workspace }) {
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td className="p-2 text-gray-500" colSpan="4">Nėra įrašų.</td>
+                <td className="p-2 text-gray-500" colSpan="5">Nėra įrašų.</td>
               </tr>
             )}
           </tbody>
@@ -254,35 +268,68 @@ export default function SettingsServices({ workspace }) {
         }
       >
         <div className="space-y-3">
-          <div>
-            <div className="text-xs text-gray-500 mb-1">Kategorija *</div>
-            <input
-              className="w-full border rounded-xl px-3 py-2"
-              placeholder='pvz. "Dažymas", "Depiliavimas"'
-              value={catName}
-              onChange={(e) => setCatName(e.target.value)}
-            />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <div className="text-xs text-gray-500 mb-1">Kategorija *</div>
+              <input
+                className="w-full border rounded-xl px-3 py-2"
+                placeholder='pvz. "Dažymas", "Depiliavimas"'
+                value={catName}
+                onChange={(e) => setCatName(e.target.value)}
+              />
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 mb-1">Kategorijos spalva (nebūtina)</div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  className="w-10 h-10 p-0 border rounded-xl"
+                  value={categoryColor || DEFAULT_GRAY}
+                  onChange={(e) => setCategoryColor(e.target.value)}
+                  title={categoryColor || "numatyta (pilka)"}
+                />
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded-xl border"
+                  onClick={() => setCategoryColor("")}
+                  title="Grąžinti į numatytą (pilką)"
+                >
+                  Grąžinti į numatytą
+                </button>
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                Jei paliksite tuščią — bus naudojama numatyta pilka spalva.
+              </div>
+            </div>
           </div>
 
-          <div>
-            <div className="text-xs text-gray-500 mb-1">Kategorijos kaina (nebūtina)</div>
-            <input
-              type="number"
-              step="0.01"
-              className="w-full border rounded-xl px-3 py-2"
-              placeholder="pvz. 30"
-              value={categoryPrice}
-              onChange={(e) => setCategoryPrice(e.target.value)}
-            />
-            <div className="text-xs text-gray-500 mt-1">
-              Jei nepridėsi subkategorijų – bus sukurta tik kategorija su (nebūtina) kaina.
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <div className="text-xs text-gray-500 mb-1">Kategorijos kaina (nebūtina)</div>
+              <input
+                type="number"
+                step="0.01"
+                className="w-full border rounded-xl px-3 py-2"
+                placeholder="pvz. 30"
+                value={categoryPrice}
+                onChange={(e) => setCategoryPrice(e.target.value)}
+              />
             </div>
+            <label className="sm:col-span-2 flex items-center gap-2 mt-5 sm:mt-0">
+              <input
+                type="checkbox"
+                className="w-4 h-4"
+                checked={excludeFromStats}
+                onChange={(e) => setExcludeFromStats(e.target.checked)}
+              />
+              <span className="text-sm">Neįtraukti šios kategorijos (ir jos subkategorijų) į statistiką</span>
+            </label>
           </div>
 
           <div className="border rounded-2xl p-3 space-y-2">
             <div className="font-medium">Subkategorijos (nebūtina)</div>
             {rows.map((r, i) => (
-              <div key={i} className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+              <div key={i} className="grid grid-cols-1 sm:grid-cols-6 gap-2 items-center">
                 <input
                   className="sm:col-span-3 border rounded-xl px-3 py-2"
                   placeholder="Subkategorijos pavadinimas (pvz., Balayage)"
@@ -297,7 +344,24 @@ export default function SettingsServices({ workspace }) {
                   value={r.price}
                   onChange={(e) => setRow(i, { price: e.target.value })}
                 />
-                <div className="flex gap-2">
+                <div className="sm:col-span-1 flex items-center gap-2">
+                  <input
+                    type="color"
+                    className="w-10 h-10 p-0 border rounded-xl"
+                    title="Subkategorijos spalva (nebūtina)"
+                    value={r.color || DEFAULT_GRAY}
+                    onChange={(e) => setRow(i, { color: e.target.value })}
+                  />
+                  <button
+                    type="button"
+                    className="px-2 py-1 rounded-lg border text-sm"
+                    onClick={() => setRow(i, { color: "" })}
+                    title="Grąžinti į numatytą (pilką)"
+                  >
+                    Numatyta
+                  </button>
+                </div>
+                <div className="flex gap-2 sm:col-span-6">
                   <button onClick={() => removeRow(i)} className="px-2 py-1 rounded-lg border text-sm">
                     Šalinti eilutę
                   </button>
@@ -341,7 +405,7 @@ export default function SettingsServices({ workspace }) {
               placeholder="palik tuščią, jei tai tik kategorija"
             />
           </div>
-          <div className="sm:col-span-2">
+          <div>
             <div className="text-xs text-gray-500 mb-1">Kaina (nebūtina)</div>
             <input
               type="number"
@@ -351,6 +415,35 @@ export default function SettingsServices({ workspace }) {
               onChange={(e) => setEditForm({ ...editForm, price: e.target.value })}
             />
           </div>
+          <div>
+            <div className="text-xs text-gray-500 mb-1">Spalva (nebūtina)</div>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                className="w-10 h-10 p-0 border rounded-xl"
+                value={editForm.color || DEFAULT_GRAY}
+                onChange={(e) => setEditForm({ ...editForm, color: e.target.value })}
+                title={editForm.color || "numatyta (pilka)"}
+              />
+              <button
+                type="button"
+                className="px-3 py-2 rounded-xl border"
+                onClick={() => setEditForm({ ...editForm, color: "" })}
+                title="Grąžinti į numatytą (pilką)"
+              >
+                Grąžinti į numatytą
+              </button>
+            </div>
+          </div>
+          <label className="sm:col-span-2 flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="w-4 h-4"
+              checked={editForm.exclude}
+              onChange={(e) => setEditForm({ ...editForm, exclude: e.target.checked })}
+            />
+            <span className="text-sm">Neįtraukti į statistiką</span>
+          </label>
         </div>
       </Modal>
     </div>

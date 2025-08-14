@@ -18,6 +18,7 @@ import Modal from "../components/Modal";
 
 const WORK_START = "09:00";
 const WORK_END = "19:00";
+const DEFAULT_SVC_COLOR = "#e5e7eb"; // <- pilka (tailwind gray-300)
 
 const t5 = (s) => s?.slice(0, 5) || "";
 const toMin = (t) => {
@@ -35,25 +36,29 @@ function StatusPill({ status }) {
   };
   const s = map[status || "scheduled"];
   return (
-    <span
-      className={`rounded-full ${s.cls} text-[10px] sm:text-xs px-1.5 py-[2px] sm:px-2 sm:py-1`}
-    >
+    <span className={`rounded-full ${s.cls} text-[10px] sm:text-xs px-1.5 py-[2px] sm:px-2 sm:py-1`}>
       {s.text}
     </span>
   );
 }
 
 export default function DayView({ workspace }) {
+  // Pasirinkta diena
   const [date, setDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
+  // Mėnuo kalendoriuje
   const [viewMonth, setViewMonth] = useState(() => new Date());
+  // Įrašai
   const [items, setItems] = useState([]);
 
+  // Redagavimas
   const [editingId, setEditingId] = useState(null);
   const [edit, setEdit] = useState({ date: "", start_time: "", end_time: "", price: "", note: "" });
 
+  // Paslaugos (greitam pridėjimui)
   const [services, setServices] = useState([]);
   const categories = useMemo(() => Array.from(new Set(services.map((s) => s.category))), [services]);
 
+  // Pridėti iš tarpo
   const [addOpen, setAddOpen] = useState(false);
   const [addForm, setAddForm] = useState({
     start: "",
@@ -65,23 +70,24 @@ export default function DayView({ workspace }) {
   });
   const [addPriceEdited, setAddPriceEdited] = useState(false);
 
+  // Klientai (greitam pridėjimui)
   const [clients, setClients] = useState([]);
   const [clientSearch, setClientSearch] = useState("");
   const [selectedClientId, setSelectedClientId] = useState(null);
 
+  // Naujas klientas (submodalas)
   const [newClientOpen, setNewClientOpen] = useState(false);
-  const [newClient, setNewClient] = useState({
-    name: "",
-    phone: "",
-    email: "",
-    gender: "female",
-  });
+  const [newClient, setNewClient] = useState({ name: "", phone: "", email: "", gender: "female" });
 
-  // 3-dots meniu
+  // 3 taškų meniu
   const [menuOpenId, setMenuOpenId] = useState(null);
+
+  // Išplėstas (detalių) rodinys kortelei
+  const [expandedId, setExpandedId] = useState(null);
+
   useEffect(() => {
     const closeOnOutside = () => setMenuOpenId(null);
-    const closeOnEsc = (e) => e.key === "Escape" && setMenuOpenId(null);
+    const closeOnEsc = (e) => e.key === "Escape" && (setMenuOpenId(null), setExpandedId(null));
     window.addEventListener("click", closeOnOutside);
     window.addEventListener("keydown", closeOnEsc);
     return () => {
@@ -107,7 +113,8 @@ export default function DayView({ workspace }) {
   async function load() {
     const { data, error } = await supabase
       .from("appointments")
-      .select("*, clients(name, phone), services(name, category)")
+      // parsinešam ir services.color (kategorijos / subkategorijos spalvai)
+      .select("*, clients(name, phone), services(name, category, color)")
       .eq("workspace_id", workspace.id)
       .eq("date", date)
       .order("start_time", { ascending: true });
@@ -155,6 +162,7 @@ export default function DayView({ workspace }) {
   function startEdit(a) {
     setEditingId(a.id);
     setMenuOpenId(null);
+    setExpandedId(a.id); // atidarom detales redaguojamam, kad aiškiau
     setEdit({
       date: a.date,
       start_time: t5(a.start_time),
@@ -411,7 +419,15 @@ export default function DayView({ workspace }) {
               </button>
             </div>
           ) : (
-            <div key={slot.data.id} className="relative p-2 sm:p-4 border rounded-2xl">
+            <div
+              key={slot.data.id}
+              className="relative p-2 sm:p-4 border rounded-2xl"
+              style={
+                slot.data.services?.color
+                  ? { borderLeftWidth: 6, borderLeftColor: slot.data.services.color }
+                  : {}
+              }
+            >
               {editingId === slot.data.id ? (
                 <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
                   <div className="md:col-span-2">
@@ -455,19 +471,30 @@ export default function DayView({ workspace }) {
                 </div>
               ) : (
                 <>
-                  <div className="flex items-start justify-between gap-1 sm:gap-2">
+                  {/* Collapsed eilutė: tik pradžios laikas + klientas + paslauga */}
+                  <div
+                    className="flex items-start justify-between gap-1 sm:gap-2 cursor-pointer"
+                    onClick={(e) => { e.stopPropagation(); setExpandedId(expandedId === slot.data.id ? null : slot.data.id); }}
+                  >
                     <div className="min-w-0">
                       <div className="font-medium text-[13px] sm:text-base leading-tight truncate">
-                        {t5(slot.data.start_time)}–{t5(slot.data.end_time)} — {slot.data.clients?.name}
+                        {/* TIK PRADŽIOS LAIKAS */}
+                        {t5(slot.data.start_time)} — {slot.data.clients?.name}
                       </div>
-                      <div className="text-[12px] text-gray-600 truncate">
-                        {slot.data.services?.category || slot.data.category}
-                        {slot.data.services?.name ? " • " + slot.data.services.name : ""}{" "}
-                        {slot.data.price ? `• ${slot.data.price} €` : ""}
+                      <div className="text-[12px] text-gray-600 truncate flex items-center gap-1">
+                        {/* kategorijos spalvos taškas (jei yra) */}
+                        {slot.data.services?.color && (
+                          <span
+                            className="inline-block w-2.5 h-2.5 rounded-full"
+                            style={{ backgroundColor: slot.data.services.color }}
+                          />
+                        )}
+                        <span className="truncate">
+                          {slot.data.services?.category || slot.data.category}
+                          {slot.data.services?.name ? " • " + slot.data.services.name : ""}{" "}
+                          {slot.data.price ? `• ${slot.data.price} €` : ""}
+                        </span>
                       </div>
-                      {slot.data.note && (
-                        <div className="text-[12px] text-gray-600 mt-0.5 line-clamp-1 sm:line-clamp-2">{slot.data.note}</div>
-                      )}
                     </div>
                     <div className="flex items-center gap-1 sm:gap-2 shrink-0">
                       <StatusPill status={slot.data.status} />
@@ -481,6 +508,23 @@ export default function DayView({ workspace }) {
                     </div>
                   </div>
 
+                  {/* Išplėstos detalės: tik jei atidaryta */}
+                  {expandedId === slot.data.id && (
+                    <div className="mt-2 text-[12px] sm:text-sm text-gray-700 space-y-1" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">Laikas:</span>
+                        <span>{t5(slot.data.start_time)}–{t5(slot.data.end_time)}</span>
+                      </div>
+                      {slot.data.note && (
+                        <div>
+                          <span className="font-medium">Pastabos:</span>{" "}
+                          <span className="whitespace-pre-wrap">{slot.data.note}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 3-taškų meniu */}
                   {menuOpenId === slot.data.id && (
                     <div
                       className="absolute right-2 top-9 sm:top-10 z-10 w-40 sm:w-44 rounded-xl border bg-white shadow-lg p-1"
@@ -520,6 +564,7 @@ export default function DayView({ workspace }) {
         }
       >
         <div className="space-y-3 sm:space-y-4">
+          {/* Klientas */}
           <div>
             <div className="flex items-center justify-between">
               <div className="text-sm text-gray-600 mb-1">Klientas</div>
