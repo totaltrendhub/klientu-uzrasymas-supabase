@@ -27,7 +27,6 @@ const toMin = (t) => {
 const lt = (a, b) => toMin(a) < toMin(b);
 const diffMin = (a, b) => toMin(b) - toMin(a);
 
-// „Default“ pilka spalva, kai kategorijos spalva neparinkta
 const DEFAULT_COLOR = "#e5e7eb";
 
 // sort helper
@@ -52,7 +51,7 @@ function StatusPill({ status }) {
 
 export default function DayView({ workspace }) {
   // UI pranešimai
-  const [msg, setMsg] = useState(null); // {type:'ok'|'error', text:string}
+  const [msg, setMsg] = useState(null);
   useEffect(() => {
     if (!msg) return;
     const t = setTimeout(() => setMsg(null), 4000);
@@ -68,12 +67,11 @@ export default function DayView({ workspace }) {
   const [items, setItems] = useState([]);
   const [loadingItems, setLoadingItems] = useState(false);
 
-  // Darbo laikas / Miestai iš workspace
+  // Darbo laikas / Miestai / Dienų-miesto žymėjimai iš workspace
   const [workStart, setWorkStart] = useState(FALLBACK_WORK_START);
   const [workEnd, setWorkEnd] = useState(FALLBACK_WORK_END);
-  const [cities, setCities] = useState([]); // [{id,name,color}]
-  // Miestas priskirtas dienai (mėnesio intervalui)
-  const [dayCityMap, setDayCityMap] = useState({}); // {'yyyy-MM-dd': 'cityId'}
+  const [cities, setCities] = useState([]); // [{name,color}]
+  const [dayCityMap, setDayCityMap] = useState({}); // {'yyyy-MM-dd': 'Miesto pavadinimas'}
 
   // redagavimas
   const [editingId, setEditingId] = useState(null);
@@ -159,20 +157,32 @@ export default function DayView({ workspace }) {
 
   /* ---- Užkrovimai ---- */
 
-  // 1) Workspaces meta: work hours + cities
+  // 1) Workspaces meta: work hours + cities + city_schedule
   useEffect(() => {
     async function loadMeta() {
       if (!workspace?.id) return;
       const { data, error } = await supabase
         .from("workspaces")
-        .select("work_start, work_end, cities")
+        .select("work_start, work_end, cities, city_schedule")
         .eq("id", workspace.id)
         .single();
       if (error) return; // tyliai
       setWorkStart((data?.work_start || "").slice(0, 5) || FALLBACK_WORK_START);
       setWorkEnd((data?.work_end || "").slice(0, 5) || FALLBACK_WORK_END);
+
       const arr = Array.isArray(data?.cities) ? data.cities : [];
-      setCities(arr);
+      setCities(
+        arr.map((c) => ({
+          name: (c?.name ?? "").toString(),
+          color: (c?.color ?? DEFAULT_COLOR).toString(),
+        }))
+      );
+
+      const sched =
+        data?.city_schedule && typeof data.city_schedule === "object"
+          ? data.city_schedule
+          : {};
+      setDayCityMap(sched);
     }
     loadMeta();
   }, [workspace?.id]);
@@ -214,54 +224,6 @@ export default function DayView({ workspace }) {
     }
     fetchServices();
   }, [workspace.id]);
-
-  // 4) Load cities per day for current month grid
-  useEffect(() => {
-    async function loadDayCities() {
-      if (!workspace?.id) return;
-      const start = monthGridDays[0];
-      const end = monthGridDays[monthGridDays.length - 1];
-      const { data, error } = await supabase
-        .from("workday_cities")
-        .select("date, city_id")
-        .eq("workspace_id", workspace.id)
-        .gte("date", format(start, "yyyy-MM-dd"))
-        .lte("date", format(end, "yyyy-MM-dd"));
-      if (error) return; // tyliai
-      const map = {};
-      (data || []).forEach((r) => {
-        map[r.date] = r.city_id;
-      });
-      setDayCityMap(map);
-    }
-    if (monthGridDays.length) loadDayCities();
-  }, [workspace?.id, monthGridDays]);
-
-  // debounce klientų paieškai
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedClientSearch(clientSearch), 300);
-    return () => clearTimeout(t);
-  }, [clientSearch]);
-
-  useEffect(() => {
-    async function fetchClients() {
-      let q = supabase
-        .from("clients")
-        .select("*")
-        .eq("workspace_id", workspace.id)
-        .order("name", { ascending: true })
-        .limit(100);
-      if (debouncedClientSearch?.trim())
-        q = q.ilike("name", `%${debouncedClientSearch.trim()}%`);
-      const { data, error } = await q;
-      if (error) {
-        setMsg({ type: "error", text: error.message });
-        return;
-      }
-      setClients(data || []);
-    }
-    if (addOpen) fetchClients();
-  }, [debouncedClientSearch, workspace.id, addOpen]);
 
   // ---- Spalvos logika: subkategorija -> kategorija (be name) -> pilka
   const colorForAppt = (a) => {
@@ -309,12 +271,10 @@ export default function DayView({ workspace }) {
     setEditPriceEdited(false);
   }
 
-  // – kai keičiasi kategorija/subpaslauga redagavimo formoje, leisti autofill'ui
   useEffect(() => {
     setEditPriceEdited(false);
   }, [edit.category, edit.serviceId]);
 
-  // – pagrindinis kainos autofill redaguojant
   useEffect(() => {
     if (editPriceEdited) return;
     if (selectedEditService && selectedEditService.default_price != null) {
@@ -350,7 +310,6 @@ export default function DayView({ workspace }) {
       return;
     }
 
-    // konfliktų patikra
     const { data: overlaps } = await supabase
       .from("appointments")
       .select("id,start_time,end_time")
@@ -399,7 +358,6 @@ export default function DayView({ workspace }) {
 
   async function remove(id) {
     if (!window.confirm("Pašalinti įrašą?")) return;
-    // Optimistic UI
     setDeletingId(id);
     const prev = items;
     setItems((cur) => cur.filter((x) => x.id !== id));
@@ -416,7 +374,6 @@ export default function DayView({ workspace }) {
   }
 
   async function setStatus(id, status) {
-    // Optimistic UI
     setStatusUpdatingId(id);
     const prev = items;
     setItems((cur) => cur.map((x) => (x.id === id ? { ...x, status } : x)));
@@ -530,7 +487,6 @@ export default function DayView({ workspace }) {
       return;
     }
 
-    // konfliktų patikra
     const { data: overlaps } = await supabase
       .from("appointments")
       .select("id,start_time,end_time")
@@ -630,53 +586,11 @@ export default function DayView({ workspace }) {
     }
   };
 
-  /* ---- Dienos miesto pasirinkimas ---- */
-  const selectedDayCityId = dayCityMap[date] || "";
+  /* ---- Pagal miesto pavadinimą rasti spalvą ---- */
+  const cityColorByName = (name) =>
+    cities.find((c) => c.name === name)?.color || DEFAULT_COLOR;
 
-  async function saveDayCity(cityId) {
-    if (!workspace?.id) return;
-    try {
-      if (!cityId) {
-        await supabase
-          .from("workday_cities")
-          .delete()
-          .eq("workspace_id", workspace.id)
-          .eq("date", date);
-        setDayCityMap((m) => {
-          const n = { ...m };
-          delete n[date];
-          return n;
-        });
-        return;
-      }
-      // patikrinam ar yra įrašas šiai datai
-      const { data: existing } = await supabase
-        .from("workday_cities")
-        .select("id")
-        .eq("workspace_id", workspace.id)
-        .eq("date", date)
-        .limit(1)
-        .maybeSingle();
-
-      if (existing?.id) {
-        await supabase
-          .from("workday_cities")
-          .update({ city_id: cityId })
-          .eq("id", existing.id);
-      } else {
-        await supabase
-          .from("workday_cities")
-          .insert({ workspace_id: workspace.id, date, city_id: cityId });
-      }
-      setDayCityMap((m) => ({ ...m, [date]: cityId }));
-    } catch (e) {
-      setMsg({ type: "error", text: e.message || "Nepavyko išsaugoti miesto." });
-    }
-  }
-
-  // pagal city_id rasti spalvą
-  const cityColor = (id) =>
-    cities.find((c) => String(c.id) === String(id))?.color || DEFAULT_COLOR;
+  const selectedDayCityName = dayCityMap[date] || "";
 
   return (
     <div className="bg-white rounded-2xl shadow p-3 sm:p-5 space-y-2 sm:space-y-4">
@@ -721,12 +635,12 @@ export default function DayView({ workspace }) {
           </div>
         </div>
 
-        {/* Miestų legenda (jei yra) */}
+        {/* Miestų legenda */}
         {cities.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-2">
             {cities.map((c) => (
               <div
-                key={c.id}
+                key={c.name}
                 className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border"
                 title={c.name}
               >
@@ -734,7 +648,7 @@ export default function DayView({ workspace }) {
                   className="inline-block w-3 h-3 rounded"
                   style={{ backgroundColor: c.color || DEFAULT_COLOR }}
                 />
-                <span className="truncate max-w-[120px]">{c.name}</span>
+                <span className="truncate max-w-[140px]">{c.name}</span>
               </div>
             ))}
           </div>
@@ -752,7 +666,7 @@ export default function DayView({ workspace }) {
           ))}
         </div>
 
-        {/* Dienų tinklelis (su miesto tašku apatiniame dešiniajame kampe) */}
+        {/* Dienų tinklelis — langelis nuspalvintas miesto spalva */}
         <div className="grid grid-cols-7 gap-1 sm:gap-2">
           {monthGridDays.map((d) => {
             const isOtherMonth = !isSameMonth(d, viewMonth);
@@ -760,34 +674,40 @@ export default function DayView({ workspace }) {
             const isSelected = dStr === date;
             const isToday = d.toDateString() === new Date().toDateString();
             const isWeekend = d.getDay() === 6 || d.getDay() === 0;
-            const dayCityId = dayCityMap[dStr];
 
-            const cls =
-              "relative h-9 sm:h-12 rounded-xl border text-[13px] sm:text-sm flex items-center justify-center " +
+            const assignedCity = dayCityMap[dStr] || "";
+            const assignedColor = assignedCity ? cityColorByName(assignedCity) : null;
+
+            const baseCls =
+              "relative h-9 sm:h-12 rounded-xl border text-[13px] sm:text-sm flex items-center justify-center transition-colors " +
               (isSelected
                 ? "bg-emerald-600 text-white border-emerald-600"
                 : isWeekend
-                ? "bg-rose-50 hover:bg-rose-100"
-                : "bg-white hover:bg-gray-50") +
+                ? "hover:bg-rose-100"
+                : "hover:bg-gray-50") +
               (isOtherMonth ? " opacity-40" : "") +
-              (isToday && !isSelected ? " ring-1 ring-emerald-300" : "");
+              (isToday && !isSelected ? " ring-1 ring-emerald-300" : "") +
+              (!isSelected && assignedCity ? " text-white" : "");
 
             return (
               <button
                 key={dStr}
                 onClick={() => setDate(dStr)}
-                className={cls}
-                title={dStr}
+                className={baseCls}
+                title={assignedCity ? `${dStr} • ${assignedCity}` : dStr}
+                style={
+                  !isSelected && assignedColor
+                    ? { backgroundColor: assignedColor, borderColor: assignedColor }
+                    : undefined
+                }
               >
                 {d.getDate()}
 
-                {/* Miesto indikatorius */}
-                {dayCityId && (
-                  <span
-                    className="absolute right-1 bottom-1 w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full"
-                    style={{ backgroundColor: cityColor(dayCityId) }}
-                    aria-hidden="true"
-                  />
+                {/* Miesto pavadinimas apatiniame kairiajame kampe */}
+                {!isSelected && assignedCity && !isOtherMonth && (
+                  <div className="absolute left-1 bottom-0.5 text-[10px] sm:text-[11px] font-medium pointer-events-none">
+                    {assignedCity}
+                  </div>
                 )}
               </button>
             );
@@ -795,7 +715,7 @@ export default function DayView({ workspace }) {
         </div>
       </div>
 
-      {/* Pasirinktos dienos antraštė + Miesto priskyrimas */}
+      {/* Pasirinktos dienos antraštė + miesto žyma (read-only) */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
         <div className="text-sm sm:text-base font-medium">
           {new Date(date).toLocaleDateString("lt-LT", {
@@ -805,49 +725,13 @@ export default function DayView({ workspace }) {
           })}
         </div>
 
-        {cities.length > 0 && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-600">Miestas dienai:</span>
-            <div className="flex flex-wrap gap-1.5">
-              {/* „Nėra“ */}
-              <button
-                className={
-                  "px-2.5 py-1.5 rounded-xl border text-xs sm:text-sm " +
-                  (!selectedDayCityId
-                    ? "bg-gray-900 text-white border-gray-900"
-                    : "bg-white hover:bg-gray-50")
-                }
-                onClick={() => saveDayCity("")}
-                title="Išvalyti"
-              >
-                Nėra
-              </button>
-              {cities.map((c) => {
-                const active = String(selectedDayCityId) === String(c.id);
-                return (
-                  <button
-                    key={c.id}
-                    onClick={() => saveDayCity(c.id)}
-                    className={
-                      "px-2.5 py-1.5 rounded-xl border text-xs sm:text-sm inline-flex items-center gap-2 " +
-                      (active ? "text-white" : "bg-white hover:bg-gray-50")
-                    }
-                    style={{
-                      backgroundColor: active ? c.color || DEFAULT_COLOR : undefined,
-                      borderColor: active ? c.color || DEFAULT_COLOR : undefined,
-                      color: active ? "#fff" : undefined,
-                    }}
-                    title={c.name}
-                  >
-                    <span
-                      className="inline-block w-3 h-3 rounded"
-                      style={{ backgroundColor: c.color || DEFAULT_COLOR }}
-                    />
-                    {c.name}
-                  </button>
-                );
-              })}
-            </div>
+        {selectedDayCityName && (
+          <div className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-xl border text-xs sm:text-sm">
+            <span
+              className="inline-block w-3 h-3 rounded"
+              style={{ backgroundColor: cityColorByName(selectedDayCityName) }}
+            />
+            {selectedDayCityName}
           </div>
         )}
       </div>
