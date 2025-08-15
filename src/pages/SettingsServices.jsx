@@ -5,6 +5,8 @@ import { supabase } from "../supabaseClient";
 import Modal from "../components/Modal";
 
 const DEFAULT_GRAY = "#e5e7eb"; // kai color === null/tuščia
+const DEFAULT_WORK_START = "09:00";
+const DEFAULT_WORK_END = "19:00";
 
 /* ─────────────────────────────
  * Mažas Tooltip komponentas (per portalą, kad "overflow" neužmaskuotų)
@@ -148,6 +150,10 @@ const norm = (v) => (v ?? "").toString().trim();
 const validHex = (v) =>
   v === "" ||
   /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v);
+const toMin = (t) => {
+  const [h, m] = String(t || "0:0").split(":").map(Number);
+  return h * 60 + (m || 0);
+};
 
 const byCatThenName = (a, b) => {
   const ac = norm(a.category).toLocaleLowerCase("lt");
@@ -169,6 +175,15 @@ export default function SettingsServices({ workspace }) {
   const [qDebounced, setQDebounced] = useState("");
 
   const [msg, setMsg] = useState(null); // {type:'ok'|'error', text:string}
+
+  /* ---- Darbo laikas ---- */
+  const [workStart, setWorkStart] = useState(DEFAULT_WORK_START);
+  const [workEnd, setWorkEnd] = useState(DEFAULT_WORK_END);
+  const [savingHours, setSavingHours] = useState(false);
+
+  /* ---- Miestai (darbo vietos) ---- */
+  const [cities, setCities] = useState([]); // [{name, color}]
+  const [savingCities, setSavingCities] = useState(false);
 
   // Kurti paslaugą (kategorija + (nebūtinas) sąrašas subkategorijų)
   const [createOpen, setCreateOpen] = useState(false);
@@ -198,8 +213,35 @@ export default function SettingsServices({ workspace }) {
   const menuBtnRef = useRef({}); // { [id]: ref }
   const [deletingId, setDeletingId] = useState(null);
 
-  /* ---------- Užkrovimas ---------- */
-  async function load() {
+  /* ---------- Užkrovimai ---------- */
+  // Darbo laikas + miestai iš workspaces
+  useEffect(() => {
+    async function loadWorkspaceSettings() {
+      if (!workspace?.id) return;
+      const { data } = await supabase
+        .from("workspaces")
+        .select("work_start, work_end, cities")
+        .eq("id", workspace.id)
+        .single();
+
+      if (data) {
+        setWorkStart((data.work_start || "").slice(0, 5) || DEFAULT_WORK_START);
+        setWorkEnd((data.work_end || "").slice(0, 5) || DEFAULT_WORK_END);
+        const arr = Array.isArray(data.cities) ? data.cities : [];
+        // sanitarizuojam: name string, color valid/gray
+        setCities(
+          arr.map((c) => ({
+            name: norm(c?.name),
+            color: validHex(norm(c?.color)) && norm(c?.color) ? norm(c?.color) : DEFAULT_GRAY,
+          }))
+        );
+      }
+    }
+    loadWorkspaceSettings();
+  }, [workspace?.id]);
+
+  // Paslaugų sąrašas
+  async function loadServices() {
     setLoadingList(true);
     const { data, error } = await supabase
       .from("services")
@@ -214,9 +256,8 @@ export default function SettingsServices({ workspace }) {
     }
     setList(data || []);
   }
-
   useEffect(() => {
-    load();
+    loadServices();
   }, [workspace.id]);
 
   /* ---------- Debounce q ---------- */
@@ -240,6 +281,84 @@ export default function SettingsServices({ workspace }) {
         (x.name || "").toLowerCase().includes(s)
     );
   }, [list, qDebounced]);
+
+  /* ---------- Darbo laikas ---------- */
+  function resetWorkHours() {
+    setWorkStart(DEFAULT_WORK_START);
+    setWorkEnd(DEFAULT_WORK_END);
+  }
+  async function saveWorkHours() {
+    if (!workspace?.id) return;
+    if (toMin(workStart) >= toMin(workEnd)) {
+      setMsg({ type: "error", text: "Pabaiga turi būti vėliau nei pradžia." });
+      return;
+    }
+    try {
+      setSavingHours(true);
+      const payload = {
+        work_start: workStart + ":00",
+        work_end: workEnd + ":00",
+      };
+      const { error } = await supabase
+        .from("workspaces")
+        .update(payload)
+        .eq("id", workspace.id);
+      if (error) throw error;
+      setMsg({ type: "ok", text: "Darbo laikas išsaugotas." });
+    } catch (e) {
+      setMsg({
+        type: "error",
+        text: e.message || "Nepavyko išsaugoti darbo laiko.",
+      });
+    } finally {
+      setSavingHours(false);
+    }
+  }
+
+  /* ---------- Miestai ---------- */
+  function addCity() {
+    setCities((c) => [...c, { name: "", color: DEFAULT_GRAY }]);
+  }
+  function setCity(i, patch) {
+    setCities((arr) => arr.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
+  }
+  function removeCity(i) {
+    const label = cities[i]?.name || "miestą";
+    if (!window.confirm(`Ar tikrai norite pašalinti „${label}“?`)) return;
+    setCities((arr) => arr.filter((_, idx) => idx !== i));
+  }
+  function validateCities() {
+    const names = cities.map((c) => norm(c.name)).filter(Boolean);
+    const dup = names.find((n, i) => names.indexOf(n) !== i);
+    if (dup) return { ok: false, reason: `Miestas „${dup}“ dubliuojasi.` };
+    for (const c of cities) {
+      if (!norm(c.name)) return { ok: false, reason: "Miesto pavadinimas negali būti tuščias." };
+      if (!validHex(norm(c.color))) return { ok: false, reason: `Netinkama spalva miestui „${c.name}“.` };
+    }
+    return { ok: true };
+  }
+  async function saveCities() {
+    if (!workspace?.id) return;
+    const v = validateCities();
+    if (!v.ok) {
+      setMsg({ type: "error", text: v.reason });
+      return;
+    }
+    try {
+      setSavingCities(true);
+      const payload = {
+        // laikom lengvą struktūrą, be id – DayView pakaks name+color
+        cities: cities.map((c) => ({ name: norm(c.name), color: norm(c.color) || DEFAULT_GRAY })),
+      };
+      const { error } = await supabase.from("workspaces").update(payload).eq("id", workspace.id);
+      if (error) throw error;
+      setMsg({ type: "ok", text: "Miestai išsaugoti." });
+    } catch (e) {
+      setMsg({ type: "error", text: e.message || "Nepavyko išsaugoti miestų." });
+    } finally {
+      setSavingCities(false);
+    }
+  }
 
   /* ---------- Kurti paslaugą ---------- */
   function resetCreateForm() {
@@ -493,6 +612,123 @@ export default function SettingsServices({ workspace }) {
   /* ───────────────────────── UI ───────────────────────── */
   return (
     <div className="bg-white rounded-2xl shadow p-4 sm:p-5 space-y-4">
+      {/* DARBO LAIKAS */}
+      <div className="border rounded-2xl p-3 sm:p-4">
+        <div className="flex items-center justify-between mb-3 gap-2">
+          <div className="text-base sm:text-lg font-semibold">
+            Darbo laikas
+            <Tooltip content="Naudojama laisvų tarpų skaičiavimui Dienos peržiūroje (DayView).">
+              <HelpDot />
+            </Tooltip>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+          <div>
+            <div className="text-xs text-gray-500 mb-1">Nuo</div>
+            <input
+              type="time"
+              step="60"
+              className="w-full border rounded-xl px-3 py-2"
+              value={workStart}
+              onChange={(e) => setWorkStart(e.target.value)}
+            />
+          </div>
+          <div>
+            <div className="text-xs text-gray-500 mb-1">Iki</div>
+            <input
+              type="time"
+              step="60"
+              className="w-full border rounded-xl px-3 py-2"
+              value={workEnd}
+              onChange={(e) => setWorkEnd(e.target.value)}
+            />
+          </div>
+          <div className="flex gap-2">
+            <button
+              className="px-3 py-2 rounded-xl border w-full sm:w-auto"
+              onClick={resetWorkHours}
+            >
+              Atstatyti numatytus
+            </button>
+            <button
+              className="px-3 py-2 rounded-xl bg-emerald-600 text-white w-full sm:w-auto disabled:opacity-50"
+              onClick={saveWorkHours}
+              disabled={savingHours}
+            >
+              {savingHours ? "Saugoma..." : "Išsaugoti"}
+            </button>
+          </div>
+        </div>
+        <div className="text-xs text-gray-500 mt-2">
+          Pastaba: jei neįrašyta, bus laikoma {DEFAULT_WORK_START}–{DEFAULT_WORK_END}.
+        </div>
+      </div>
+
+      {/* MIESTAI */}
+      <div className="border rounded-2xl p-3 sm:p-4 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-base sm:text-lg font-semibold">
+            Darbo vietos (miestai)
+            <Tooltip content="Sąrašas naudojamas DayView spalvinei indikacijai (pvz., parinkto miesto spalvos juosta/akcentas).">
+              <HelpDot />
+            </Tooltip>
+          </div>
+          <button className="px-3 py-2 rounded-xl border" onClick={addCity}>
+            + Pridėti miestą
+          </button>
+        </div>
+
+        {cities.length === 0 && (
+          <div className="text-sm text-gray-600">Miestų dar nėra.</div>
+        )}
+
+        <div className="space-y-2">
+          {cities.map((c, i) => (
+            <div key={i} className="grid grid-cols-12 gap-2 items-center">
+              <input
+                className="col-span-7 sm:col-span-6 border rounded-xl px-3 py-2"
+                placeholder="Miesto pavadinimas"
+                value={c.name}
+                onChange={(e) => setCity(i, { name: e.target.value })}
+              />
+              <div className="col-span-3 sm:col-span-2 flex items-center">
+                <input
+                  type="color"
+                  className="w-10 h-10 p-0 border rounded-xl"
+                  value={c.color || DEFAULT_GRAY}
+                  onChange={(e) => setCity(i, { color: e.target.value })}
+                  title={c.color || "numatyta (pilka)"}
+                  aria-label="Miesto spalva"
+                />
+              </div>
+              <div className="col-span-2 sm:col-span-2 flex justify-end">
+                <button
+                  className="px-3 py-2 rounded-xl hover:bg-rose-50 border text-rose-600"
+                  onClick={() => removeCity(i)}
+                  title="Pašalinti miestą"
+                >
+                  Šalinti
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-50"
+            onClick={saveCities}
+            disabled={savingCities}
+          >
+            {savingCities ? "Saugoma..." : "Išsaugoti miestus"}
+          </button>
+        </div>
+        <div className="text-xs text-gray-500">
+          Patarimas: spalvas rinkitės ryškias, kad DayView būtų aišku, kuriame mieste dirbate.
+        </div>
+      </div>
+
+      {/* Antraštė + paieška (Paslaugos) */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
         <div className="text-lg font-semibold">Paslaugos</div>
         <div className="flex gap-2">
@@ -529,7 +765,7 @@ export default function SettingsServices({ workspace }) {
         </div>
       )}
 
-      {/* Lentelė */}
+      {/* Lentelė (Paslaugos) */}
       <div className="-mx-2 overflow-x-auto">
         <table className="w-full text-sm min-w-[720px]">
           <thead>

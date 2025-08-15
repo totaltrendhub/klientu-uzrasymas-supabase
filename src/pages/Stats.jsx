@@ -176,11 +176,10 @@ export default function Stats({ workspace }) {
     const d = perDay[i];
     if (!d || !chartRef.current) return;
     const rect = chartRef.current.getBoundingClientRect();
-    const clientX = (evt.touches ? evt.touches[0].clientX : evt.clientX) ?? rect.left;
-    const clientY = (evt.touches ? evt.touches[0].clientY : evt.clientY) ?? rect.top;
-    const left =
-      (clientX - rect.left) + chartRef.current.scrollLeft + 6; // šiek tiek į dešinę
-    const top = (clientY - rect.top) - 36; // virš žymeklio
+    const clientX = (evt?.touches ? evt.touches[0].clientX : evt?.clientX) ?? rect.left;
+    const clientY = (evt?.touches ? evt.touches[0].clientY : evt?.clientY) ?? rect.top;
+    const left = (clientX - rect.left) + chartRef.current.scrollLeft + 6;
+    const top = (clientY - rect.top) - 36;
     setTip({ show: true, x: left, y: Math.max(0, top), data: computeDayStats(d.date) });
   }
 
@@ -189,7 +188,7 @@ export default function Stats({ workspace }) {
   }
 
   /* ---- Kategorijos agregatai (apačios lentelė) ---- */
-  const apptCategoryMemo = apptCategory; // kad nepersirašytų anonimas
+  const apptCategoryMemo = apptCategory;
   const categoryAgg = useMemo(() => {
     const agg = new Map();
     let total = 0;
@@ -215,29 +214,6 @@ export default function Stats({ workspace }) {
   function clearFilters() {
     setGender("");
     setCategory("");
-  }
-
-  function exportCSV() {
-    const rows = [
-      ["date", "start_time", "end_time", "category", "service_name", "price", "status"],
-      ...filteredAttended.map((a) => [
-        a.date,
-        a.start_time?.slice(0, 5) || "",
-        a.end_time?.slice(0, 5) || "",
-        apptCategory(a),
-        a.services?.name || "",
-        (a.price ?? "").toString(),
-        a.status || "",
-      ]),
-    ];
-    const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `stats_${month}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
   }
 
   /* ---- UI ---- */
@@ -309,18 +285,15 @@ export default function Stats({ workspace }) {
               <option value="male">Vyras</option>
             </select>
           </div>
-          <div className="flex items-end gap-2">
+          <div className="flex items-end">
             <button className="px-3 py-2 rounded-xl border w-full sm:w-auto" onClick={clearFilters}>
               Išvalyti filtrus
-            </button>
-            <button className="px-3 py-2 rounded-xl border w-full sm:w-auto" onClick={exportCSV}>
-              Eksportuoti CSV
             </button>
           </div>
         </div>
       </div>
 
-      {/* KPI (be „Vid. kaina“) */}
+      {/* KPI */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <div className="p-4 bg-white rounded-2xl shadow">
           <div className="text-sm text-gray-600">Vizitų</div>
@@ -351,6 +324,7 @@ export default function Stats({ workspace }) {
         className="bg-white rounded-2xl shadow p-5 overflow-x-auto relative"
         ref={chartRef}
         onClick={hideTip}
+        style={{ touchAction: "pan-x pan-y" }}   // <-- leidžiam normaliai slinkti telefone
       >
         <div className="font-semibold mb-2">
           Pajamos – {format(d0, "LLLL yyyy", { locale: lt })}
@@ -361,18 +335,24 @@ export default function Stats({ workspace }) {
         ) : err ? (
           <div className="text-rose-600">{err}</div>
         ) : (
-          <svg width={chartW} height={chartH} role="img" aria-label="Pajamų grafikas">
+          <svg
+            width={Math.max(640, days.length * 22)}
+            height={240}
+            role="img"
+            aria-label="Pajamų grafikas"
+            style={{ touchAction: "pan-x pan-y" }}   // <-- neužblokuoja vertikalaus scroll
+          >
             {/* Ašys */}
-            <line x1={x0} y1={20} x2={x0} y2={yBase} stroke="currentColor" opacity="0.4" />
-            <line x1={x0} y1={yBase} x2={xEnd} y2={yBase} stroke="currentColor" opacity="0.4" />
+            <line x1={40} y1={20} x2={40} y2={200} stroke="currentColor" opacity="0.4" />
+            <line x1={40} y1={200} x2={Math.max(620, days.length * 22)} y2={200} stroke="currentColor" opacity="0.4" />
 
             {/* Y tinklas + žymos */}
             {[0, 0.25, 0.5, 0.75, 1].map((f, i) => {
               const val = maxY * f;
-              const y = yScale(val);
+              const y = 200 - (val / maxY) * 180;
               return (
                 <g key={i}>
-                  <line x1={x0} y1={y} x2={xEnd} y2={y} stroke="currentColor" opacity="0.08" />
+                  <line x1={40} y1={y} x2={Math.max(620, days.length * 22)} y2={y} stroke="currentColor" opacity="0.08" />
                   <text x={6} y={y + 4} fontSize="10">{Math.round(val)} €</text>
                 </g>
               );
@@ -380,10 +360,10 @@ export default function Stats({ workspace }) {
 
             {/* Stulpeliai (dienos) */}
             {perDay.map((d, i) => {
-              const step = (xEnd - x0) / Math.max(1, perDay.length - 1);
-              const x = x0 + i * step - 6;
-              const h = yScale(0) - yScale(d.sum);
-              const y = yBase - h;
+              const step = (Math.max(620, days.length * 22) - 40) / Math.max(1, perDay.length - 1);
+              const x = 40 + i * step - 6;
+              const h = (d.sum / maxY) * 180;
+              const y = 200 - h;
               const dayNum = parseInt(d.date.slice(-2), 10);
               return (
                 <g key={d.date}>
@@ -397,11 +377,10 @@ export default function Stats({ workspace }) {
                     onMouseMove={(e) => showTipForIndex(i, e)}
                     onMouseLeave={hideTip}
                     onClick={(e) => { e.stopPropagation(); showTipForIndex(i, e); }}
-                    onTouchStart={(e) => showTipForIndex(i, e)}
                   >
                     <title>{`${d.date}: ${eur.format(d.sum)}`}</title>
                   </rect>
-                  <text x={x + 6} y={yBase + 14} fontSize="9" textAnchor="middle">
+                  <text x={x + 6} y={214} fontSize="9" textAnchor="middle">
                     {dayNum}
                   </text>
                 </g>
