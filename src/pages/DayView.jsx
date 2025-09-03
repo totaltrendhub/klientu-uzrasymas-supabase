@@ -475,7 +475,7 @@ export default function DayView({ workspace }) {
       return { ok: false, reason: "Pasirinkite klientą arba sukurkite naują." };
     if (!addForm.category)
       return { ok: false, reason: "Pasirinkite kategoriją." };
-    if (!toMin(addForm.start) || !toMin(addForm.end) || !toMin(addForm.start) < toMin(addForm.end))
+    if (!validTimeRange(addForm.start, addForm.end))
       return { ok: false, reason: "Neteisingas laiko intervalas (Nuo < Iki)." };
     if (addForm.price !== "" && Number(addForm.price) < 0)
       return { ok: false, reason: "Kaina negali būti neigiama." };
@@ -525,6 +525,8 @@ export default function DayView({ workspace }) {
       if (error) throw error;
 
       setItems((prev) => [...prev, data].sort(byStart));
+
+      // sėkmės pranešimas ir modalą uždarom
       setMsg({ type: "ok", text: "Rezervacija sukurta." });
       setAddOpen(false);
     } catch (e) {
@@ -633,7 +635,7 @@ export default function DayView({ workspace }) {
 
       {/* Kalendorius */}
       <div>
-        <div className="flex items-center mb-1 sm:mb-2">
+        <div className="flex items-center mb-1 sm:mb-2 gap-2">
           <div className="text-base sm:text-lg font-semibold mr-2 sm:mr-3">
             Kalendorius
           </div>
@@ -645,6 +647,21 @@ export default function DayView({ workspace }) {
             >
               ◀
             </button>
+
+            {/* Šiandien */}
+            <button
+              className="px-2 py-1.5 sm:px-3 sm:py-2 rounded-xl border hover:bg-gray-50"
+              onClick={() => {
+                const t = new Date();
+                const ds = format(t, "yyyy-MM-dd");
+                setDate(ds);
+                setViewMonth(new Date(t.getFullYear(), t.getMonth(), 1));
+              }}
+              aria-label="Šiandien"
+            >
+              Šiandien
+            </button>
+
             <div className="min-w-[150px] sm:min-w-[180px] text-center font-medium capitalize text-sm sm:text-base">
               {monthLabel}
             </div>
@@ -711,7 +728,8 @@ export default function DayView({ workspace }) {
                 ? "hover:bg-rose-100"
                 : "hover:bg-gray-50") +
               (isOtherMonth ? " opacity-40" : "") +
-              (isToday && !isSelected ? " ring-1 ring-emerald-300" : "") +
+              // ryškiau pažymim šiandieną, jei ji nepažymėta
+              (isToday && !isSelected ? " border-2 border-emerald-500 ring-1 ring-emerald-200" : "") +
               (!isSelected && assignedCity ? " text-white" : "");
 
             return (
@@ -727,6 +745,13 @@ export default function DayView({ workspace }) {
                 }
               >
                 {d.getDate()}
+                {/* Mažas indikatorius šiandienai */}
+                {isToday && !isSelected && (
+                  <span
+                    className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-emerald-500"
+                    aria-label="Šiandien"
+                  />
+                )}
                 {!isSelected && assignedCity && !isOtherMonth && (
                   <div className="absolute left-1 bottom-0.5 text-[10px] sm:text-[11px] font-medium pointer-events-none">
                     {assignedCity}
