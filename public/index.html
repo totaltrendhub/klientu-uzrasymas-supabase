@@ -2,11 +2,42 @@
 <html lang="lt">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Klientų užrašymas (MT test)</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Klientų užrašymas</title>
+
+    <!-- Pagrindiniai meta -->
+    <meta name="description" content="Paprastas klientų rezervacijų valdymas." />
+    <meta name="theme-color" content="#10b981" />
+    <meta name="color-scheme" content="light" />
+    <meta name="format-detection" content="telephone=no,email=no,address=no" />
+
+    <!-- iOS PWA patobulinimai -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <!-- Favicon'ai (neprivaloma) -->
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Tailwind per CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+      html, body { height: 100%; }
+      * { -webkit-tap-highlight-color: transparent; }
+      .ios-scroll { -webkit-overflow-scrolling: touch; }
+      .safe-area-b { padding-bottom: env(safe-area-inset-bottom); }
+      .hide-scrollbar { scrollbar-width: thin; }
+      .hide-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+      .hide-scrollbar::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 999px; }
+    </style>
   </head>
-  <body class="bg-gray-50">
+
+  <body class="bg-gray-50 min-h-screen antialiased text-gray-900 safe-area-b">
+    <noscript>Norint naudoti šią programą, reikia įjungti JavaScript.</noscript>
     <div id="root"></div>
   </body>
 </html>
