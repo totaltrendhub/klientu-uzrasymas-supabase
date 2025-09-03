@@ -1,5 +1,5 @@
 // src/pages/Booking.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import { supabase } from "../supabaseClient";
 import TimeField from "../components/TimeField";
@@ -10,7 +10,6 @@ import Modal from "../components/Modal";
 const norm = (v) => (v ?? "").toString().trim();
 const isEmptyName = (name) => {
   const n = norm(name);
-  // laikom "tuščiu" tiek null/""/tik tarpai, tiek dažnus „brūkšnių“ atvejus
   return n === "" || n === "-" || n === "—" || n === "–";
 };
 const getDefaultPrice = (services, category, serviceId) => {
@@ -42,13 +41,17 @@ export default function Booking({ workspace }) {
   const [end, setEnd] = useState("10:00");
   const [price, setPrice] = useState("");
   const [note, setNote] = useState("");
-  // ar vartotojas pats redagavo kainą (kad neperrašytume auto-kainos)
   const [priceEdited, setPriceEdited] = useState(false);
 
-  // 1. Klientas
+  // 1. Klientas (autocomplete)
   const [clientSearch, setClientSearch] = useState("");
-  const [clients, setClients] = useState([]);
+  const [clientQuery, setClientQuery] = useState(""); // debounced
+  const [clientSuggestions, setClientSuggestions] = useState([]);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState(null);
+  const suggestBoxRef = useRef(null);
+
+  // „Naujas klientas“
   const [showNewClient, setShowNewClient] = useState(false);
   const [newClient, setNewClient] = useState({
     name: "",
@@ -65,12 +68,10 @@ export default function Booking({ workspace }) {
   );
   const [category, setCategory] = useState("");
   const subservices = useMemo(
-    // tik tos, kurios TURI pavadinimą – kategorija be subpaslaugos nepatenka
     () => services.filter((s) => s.category === category && !!s.name),
     [services, category]
   );
-  const [serviceId, setServiceId] = useState(null); // gali būti null („tik kategorija“)
-
+  const [serviceId, setServiceId] = useState(null);
   const selectedService = useMemo(
     () =>
       serviceId
@@ -85,7 +86,7 @@ export default function Booking({ workspace }) {
       if (!workspace?.id) return;
       const { data, error } = await supabase
         .from("services")
-        .select("*") // turi ateiti default_price
+        .select("*")
         .eq("workspace_id", workspace.id)
         .order("category", { ascending: true })
         .order("name", { ascending: true });
@@ -97,42 +98,65 @@ export default function Booking({ workspace }) {
       setServices(data || []);
       if (data && data.length && !category) {
         setCategory(data[0].category);
-        setServiceId(null); // default – tik kategorija
+        setServiceId(null);
       }
     }
     loadServices();
-  }, [workspace.id]); // <- fetchinam tik kai keičiasi workspace
+  }, [workspace?.id]); // tik keičiantis workspace
 
+  // --- Autocomplete: debounce įvestį ---
   useEffect(() => {
-    async function loadClients() {
+    const t = setTimeout(() => setClientQuery(clientSearch.trim()), 250);
+    return () => clearTimeout(t);
+  }, [clientSearch]);
+
+  // --- Autocomplete: fetch ---
+  useEffect(() => {
+    async function fetchSuggestions() {
       if (!workspace?.id) return;
-      let q = supabase
-        .from("clients")
-        .select("*")
-        .eq("workspace_id", workspace.id)
-        .order("name", { ascending: true })
-        .limit(100);
-      if (clientSearch) q = q.ilike("name", `%${clientSearch}%`);
-      const { data, error } = await q;
-      if (error) {
-        console.error(error);
+      const q = clientQuery;
+      if (q.length < 2) {
+        setClientSuggestions([]);
         return;
       }
-      setClients(data || []);
+      const { data, error } = await supabase
+        .from("clients")
+        .select("id,name,phone,email")
+        .eq("workspace_id", workspace.id)
+        .ilike("name", `%${q}%`)
+        .order("name", { ascending: true })
+        .limit(10);
+
+      if (error) {
+        console.error(error);
+        setClientSuggestions([]);
+        return;
+      }
+      setClientSuggestions(data || []);
     }
-    loadClients();
-  }, [clientSearch, workspace.id]);
+    fetchSuggestions();
+  }, [clientQuery, workspace?.id]);
+
+  // --- Uždaryti pasiūlymų dėžutę paspaudus už jos ribų ---
+  useEffect(() => {
+    function onDocClick(e) {
+      if (!suggestBoxRef.current) return;
+      if (!suggestBoxRef.current.contains(e.target)) {
+        setSuggestionsOpen(false);
+      }
+    }
+    document.addEventListener("click", onDocClick, true);
+    return () => document.removeEventListener("click", onDocClick, true);
+  }, []);
 
   // --- Automat. kainos užpildymas ---
-  // kai pasirenkame kitą kategoriją ar subpaslaugą – leidžiam auto-užpildyti vėl
   useEffect(() => {
     setPriceEdited(false);
   }, [category, serviceId]);
 
-  // Pagrindinis autofill
   useEffect(() => {
     if (!workspace?.id) return;
-    if (priceEdited) return; // vartotojas pats pakeitė – neperrašom
+    if (priceEdited) return;
     const p = getDefaultPrice(services, category, serviceId);
     if (p !== "" && p != null) setPrice(String(p));
   }, [workspace?.id, services, category, serviceId, priceEdited]);
@@ -162,18 +186,12 @@ export default function Booking({ workspace }) {
       return;
     }
 
-    // Įdedam naują klientą į sąrašą ir rikiuojam
-    setClients((prev) => {
-      const next = [...prev, data]
-        .filter((v, i, arr) => arr.findIndex((x) => x.id === v.id) === i)
-        .sort((a, b) =>
-          a.name.localeCompare(b.name, "lt", { sensitivity: "base" })
-        );
-      return next;
-    });
-
-    setClientSearch("");
+    // užpildom į lauką ir pasirinktam ID
+    setClientSearch(data.name);
     setSelectedClientId(data.id);
+    setClientSuggestions([]);
+    setSuggestionsOpen(false);
+
     setShowNewClient(false);
     setNewClient({ name: "", phone: "", email: "", gender: "female" });
   }
@@ -200,8 +218,8 @@ export default function Booking({ workspace }) {
     const payload = {
       workspace_id: workspace.id,
       client_id: selectedClientId,
-      service_id: serviceId || null, // gali būti NULL, jei pasirenkama tik kategorija
-      category, // visada įrašom pasirinktą tėvinę kategoriją
+      service_id: serviceId || null, // gali būti NULL, jei tik kategorija
+      category, // visada įrašom pasirinktą kategoriją
       date,
       start_time: start + ":00",
       end_time: end + ":00",
@@ -226,80 +244,58 @@ export default function Booking({ workspace }) {
   return (
     <div className="space-y-4 sm:space-y-6">
       {/* 1. Klientas */}
-      <div className="bg-white rounded-2xl shadow p-4 sm:p-5 space-y-3">
+      <div className="bg-white rounded-2xl shadow p-4 sm:p-5 space-y-3" ref={suggestBoxRef}>
         <div className="flex items-center justify-between">
           <div className="text-lg font-semibold">1. Klientas</div>
           <button
             onClick={() => setShowNewClient(true)}
-            onTouchStart={() => setShowNewClient(true)}
             className="px-3 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700"
           >
             Naujas klientas
           </button>
         </div>
 
-        <input
-          className="w-full px-3 py-2 rounded-xl border"
-          placeholder="Paieška (vardas / pavardė)"
-          value={clientSearch}
-          onChange={(e) => setClientSearch(e.target.value)}
-        />
+        {/* Autocomplete įvestis */}
+        <div className="relative">
+          <input
+            className="w-full px-3 py-2 rounded-xl border"
+            placeholder="Įveskite bent 2 raides (vardas / pavardė)"
+            value={clientSearch}
+            onChange={(e) => {
+              setClientSearch(e.target.value);
+              setSelectedClientId(null); // kol nepasirinkta — nėra ID
+            }}
+            onFocus={() => setSuggestionsOpen(true)}
+            autoComplete="off"
+            inputMode="text"
+          />
 
-        {/* Mobile: natyvus select */}
-        <div className="sm:hidden">
-          <select
-            className="mt-2 w-full px-3 py-2 rounded-xl border"
-            value={selectedClientId || ""}
-            onChange={(e) =>
-              setSelectedClientId(
-                e.target.value ? Number(e.target.value) : null
-              )
-            }
-          >
-            <option value="">— Pasirink klientą —</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Desktop/Tablet: slenkamas sąrašas */}
-        <div className="hidden sm:block">
-          <div className="mt-2 max-h-64 overflow-auto border rounded-2xl divide-y ios-scroll">
-            {clients.map((c) => {
-              const selected = selectedClientId === c.id;
-              return (
+          {/* Pasiūlymų dėžutė */}
+          {suggestionsOpen && clientSearch.trim().length >= 2 && (
+            <div className="absolute z-20 mt-1 w-full max-h-64 overflow-auto border rounded-2xl bg-white shadow divide-y">
+              {clientSuggestions.map((c) => (
                 <button
                   key={c.id}
-                  onClick={() => setSelectedClientId(c.id)}
-                  onTouchStart={() => setSelectedClientId(c.id)}
-                  className={`w-full text-left px-3 py-2 transition ${
-                    selected
-                      ? "bg-emerald-50 border-l-4 border-emerald-500"
-                      : "hover:bg-gray-50"
-                  }`}
+                  type="button"
+                  className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                  onMouseDown={(e) => e.preventDefault()} // neleisti blur prieš onClick iOS
+                  onClick={() => {
+                    setClientSearch(c.name);
+                    setSelectedClientId(c.id);
+                    setSuggestionsOpen(false);
+                  }}
                 >
-                  <div
-                    className={`font-medium ${
-                      selected ? "text-emerald-700" : ""
-                    }`}
-                  >
-                    {c.name}
-                  </div>
+                  <div className="font-medium">{c.name}</div>
                   <div className="text-xs text-gray-600">
                     {c.phone || "—"} {c.email ? "• " + c.email : ""}
                   </div>
                 </button>
-              );
-            })}
-            {clients.length === 0 && (
-              <div className="px-3 py-2 text-sm text-gray-500">
-                Nieko nerasta.
-              </div>
-            )}
-          </div>
+              ))}
+              {clientSuggestions.length === 0 && (
+                <div className="px-3 py-2 text-sm text-gray-500">Nieko nerasta.</div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -319,14 +315,8 @@ export default function Booking({ workspace }) {
               key={cat}
               onClick={() => {
                 setCategory(cat);
-                setServiceId(null); // perjungiame į „tik kategorija“
-                setPrice(""); // pravalom, kad matytųsi naujas autofill
-                setPriceEdited(false);
-              }}
-              onTouchStart={() => {
-                setCategory(cat);
-                setServiceId(null);
-                setPrice("");
+                setServiceId(null); // į „tik kategorija“
+                setPrice(""); // kad įsipildytų nauja numatyta kaina
                 setPriceEdited(false);
               }}
               className={`px-3 py-2 rounded-xl border transition ${
@@ -353,7 +343,7 @@ export default function Booking({ workspace }) {
                 onChange={(e) => {
                   const v = e.target.value || null;
                   setServiceId(v);
-                  setPrice(""); // pravalom – iškart įsipildys nauja numatyta kaina
+                  setPrice("");
                   setPriceEdited(false);
                 }}
               >
@@ -403,7 +393,7 @@ export default function Booking({ workspace }) {
               value={price}
               onChange={(e) => {
                 setPrice(e.target.value);
-                setPriceEdited(true); // vartotojas koregavo kainą ranka
+                setPriceEdited(true);
               }}
             />
           </div>
