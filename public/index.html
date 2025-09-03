@@ -11,19 +11,18 @@
     <!-- Pagrindiniai meta -->
     <meta name="description" content="Paprastas klientų rezervacijų valdymas." />
     <meta name="theme-color" content="#10b981" />
-<<<<<<< HEAD
     <meta name="color-scheme" content="light dark" />
     <meta name="format-detection" content="telephone=no,email=no,address=no" />
 
-    <!-- iOS PWA patobulinimai (saugiai veiks ir kaip paprasta svetainė) -->
+    <!-- iOS PWA patobulinimai (veiks ir kaip paprasta svetainė) -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
-    <!-- Favicon'ai (jei turi failus /favicon.ico ir /apple-touch-icon.png, palik; jei ne – galima išimti) -->
+    <!-- Favicon'ai (jei neturi – galima palikti, tiesiog nebus rodomi) -->
     <link rel="icon" href="/favicon.ico" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 
-    <!-- Tailwind per CDN (kaip naudoji dabar) -->
+    <!-- Tailwind per CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
 
     <!-- Maži „UX fixai“ iOS ir bendri helperiai -->
@@ -35,28 +34,8 @@
       .ios-scroll { -webkit-overflow-scrolling: touch; }
       /* Saugios zonos apačioje (iPhone su „notch“) */
       .safe-area-b { padding-bottom: env(safe-area-inset-bottom); }
-      /* Švelnesnės slankjuostės – jei norėsi */
-=======
-    <meta name="color-scheme" content="light" />
-    <meta name="format-detection" content="telephone=no,email=no,address=no" />
 
-    <!-- iOS PWA patobulinimai -->
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-
-    <!-- Favicon'ai (neprivaloma) -->
-    <link rel="icon" href="/favicon.ico" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-
-    <!-- Tailwind per CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-
-    <style>
-      html, body { height: 100%; }
-      * { -webkit-tap-highlight-color: transparent; }
-      .ios-scroll { -webkit-overflow-scrolling: touch; }
-      .safe-area-b { padding-bottom: env(safe-area-inset-bottom); }
->>>>>>> e3f5c2d (Update SettingsServices ir DayView spalvų logiką)
+      /* Plonesnės slankjuostės (nebūtina) */
       .hide-scrollbar { scrollbar-width: thin; }
       .hide-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
       .hide-scrollbar::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 999px; }
@@ -64,13 +43,7 @@
   </head>
 
   <body class="bg-gray-50 min-h-screen antialiased text-gray-900 safe-area-b">
-<<<<<<< HEAD
-    <noscript>
-      Norint naudoti šią programą, reikia įjungti JavaScript.
-    </noscript>
-=======
     <noscript>Norint naudoti šią programą, reikia įjungti JavaScript.</noscript>
->>>>>>> e3f5c2d (Update SettingsServices ir DayView spalvų logiką)
     <div id="root"></div>
   </body>
 </html>
