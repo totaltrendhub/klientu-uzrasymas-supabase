@@ -10,6 +10,7 @@ import {
   addMonths,
   isSameMonth,
   parseISO,
+  getISODay,
 } from "date-fns";
 import { supabase } from "../supabaseClient";
 import DateField from "../components/DateField";
@@ -18,6 +19,7 @@ import Modal from "../components/Modal";
 
 const FALLBACK_WORK_START = "09:00";
 const FALLBACK_WORK_END = "19:00";
+const DEFAULT_COLOR = "#e5e7eb";
 
 const t5 = (s) => s?.slice(0, 5) || "";
 const toMin = (t) => {
@@ -26,8 +28,6 @@ const toMin = (t) => {
 };
 const lt = (a, b) => toMin(a) < toMin(b);
 const diffMin = (a, b) => toMin(b) - toMin(a);
-
-const DEFAULT_COLOR = "#e5e7eb";
 
 // sort helper
 const byStart = (a, b) =>
@@ -41,16 +41,13 @@ function StatusPill({ status }) {
   };
   const s = map[status || "scheduled"];
   return (
-    <span
-      className={`rounded-full ${s.cls} text-[10px] sm:text-xs px-1.5 py-[2px] sm:px-2 sm:py-1`}
-    >
+    <span className={`rounded-full ${s.cls} text-[10px] sm:text-xs px-1.5 py-[2px] sm:px-2 sm:py-1`}>
       {s.text}
     </span>
   );
 }
 
 export default function DayView({ workspace }) {
-  // UI pranešimai
   const [msg, setMsg] = useState(null);
   useEffect(() => {
     if (!msg) return;
@@ -58,21 +55,19 @@ export default function DayView({ workspace }) {
     return () => clearTimeout(t);
   }, [msg]);
 
-  // Pasirinkta diena
+  // Pasirinkta diena ir rodomas mėnuo
   const [date, setDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
-  // Mėnuo rodomas kalendoriuje
   const [viewMonth, setViewMonth] = useState(() => new Date());
 
   // Dienos įrašai
   const [items, setItems] = useState([]);
   const [loadingItems, setLoadingItems] = useState(false);
 
-  // Darbo laikas / Miestai / Dienų-miesto žymėjimai iš workspace
+  // Darbo laikas / Miestai (su dienomis)
   const [workStart, setWorkStart] = useState(FALLBACK_WORK_START);
   const [workEnd, setWorkEnd] = useState(FALLBACK_WORK_END);
-  const [cities, setCities] = useState([]); // [{name,color}]
-  const [dayCityMap, setDayCityMap] = useState({}); // {'yyyy-MM-dd': 'Miesto pavadinimas'}
-  const [savingDayCity, setSavingDayCity] = useState(false);
+  // city objektas: {name, color, days:number[]}
+  const [cities, setCities] = useState([]);
 
   // redagavimas
   const [editingId, setEditingId] = useState(null);
@@ -88,10 +83,10 @@ export default function DayView({ workspace }) {
   const [editPriceEdited, setEditPriceEdited] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // atverta (expanded) kortelė
+  // atverta kortelė
   const [expandedId, setExpandedId] = useState(null);
 
-  // paslaugos/kategorijos (greitam pridėjimui)
+  // paslaugos
   const [services, setServices] = useState([]);
   const categories = useMemo(
     () => Array.from(new Set(services.map((s) => s.category))),
@@ -112,13 +107,13 @@ export default function DayView({ workspace }) {
   const [savingAdd, setSavingAdd] = useState(false);
   const addClientSearchRef = useRef(null);
 
-  // klientai greitam pridėjimui
+  // klientai
   const [clients, setClients] = useState([]);
   const [clientSearch, setClientSearch] = useState("");
   const [debouncedClientSearch, setDebouncedClientSearch] = useState("");
   const [selectedClientId, setSelectedClientId] = useState(null);
 
-  // „Naujas klientas“ mini forma modale
+  // „Naujas klientas“
   const [newClientOpen, setNewClientOpen] = useState(false);
   const [newClient, setNewClient] = useState({
     name: "",
@@ -158,32 +153,29 @@ export default function DayView({ workspace }) {
 
   /* ---- Užkrovimai ---- */
 
-  // 1) Workspaces meta: work hours + cities + city_schedule
+  // 1) Workspaces meta: work hours + cities (su days)
   useEffect(() => {
     async function loadMeta() {
       if (!workspace?.id) return;
       const { data, error } = await supabase
         .from("workspaces")
-        .select("work_start, work_end, cities, city_schedule")
+        .select("work_start, work_end, cities")
         .eq("id", workspace.id)
         .single();
-      if (error) return; // tyliai
+      if (error) return;
       setWorkStart((data?.work_start || "").slice(0, 5) || FALLBACK_WORK_START);
       setWorkEnd((data?.work_end || "").slice(0, 5) || FALLBACK_WORK_END);
 
       const arr = Array.isArray(data?.cities) ? data.cities : [];
       setCities(
         arr.map((c) => ({
-          name: (c?.name ?? "").toString(),
-          color: (c?.color ?? DEFAULT_COLOR).toString(),
+          name: String(c?.name ?? ""),
+          color: String(c?.color ?? DEFAULT_COLOR),
+          days: Array.isArray(c?.days)
+            ? c.days.filter((n) => Number.isInteger(n) && n >= 1 && n <= 7)
+            : [],
         }))
       );
-
-      const sched =
-        data?.city_schedule && typeof data.city_schedule === "object"
-          ? data.city_schedule
-          : {};
-      setDayCityMap(sched);
     }
     loadMeta();
   }, [workspace?.id]);
@@ -226,18 +218,23 @@ export default function DayView({ workspace }) {
     fetchServices();
   }, [workspace.id]);
 
-  /* ---- Spalvų logika ----
-     Prioritetas: 1) Diena turi priskirtą miestą -> naudoti jo spalvą
+  /* ---- Miesto logika iš SettingsServices (cities[].days) ---- */
+  const cityForIsoDay = (isoDay) =>
+    cities.find((c) => Array.isArray(c.days) && c.days.includes(isoDay)) || null;
+
+  const currentIsoDay = getISODay(parseISO(date)); // 1..7
+  const currentCity = cityForIsoDay(currentIsoDay);
+  const currentCityName = currentCity?.name || "";
+  const currentCityColor = currentCity?.color || DEFAULT_COLOR;
+
+  /* ---- Spalvos įrašams ----
+     Prioritetas: 1) Miestas pagal dieną (jei yra)
                   2) Subpaslaugos spalva
                   3) Kategorijos (be name) spalva
                   4) Pilka
   */
-  const cityColorByName = (name) =>
-    cities.find((c) => c.name === name)?.color || DEFAULT_COLOR;
-  const selectedDayCityName = dayCityMap[date] || "";
-
   const colorForAppt = (a) => {
-    if (selectedDayCityName) return cityColorByName(selectedDayCityName);
+    if (currentCityName) return currentCityColor;
     if (a?.services?.color) return String(a.services.color);
     const cat = a?.services?.category || a?.category || "";
     const catRow = services.find(
@@ -404,7 +401,7 @@ export default function DayView({ workspace }) {
     }
   }
 
-  /* ---- Laisvi tarpai (naudojam WORK HOURS iš workspace) ---- */
+  /* ---- Laisvi tarpai ---- */
   const slots = useMemo(() => {
     const startLimit = workStart || FALLBACK_WORK_START;
     const endLimit = workEnd || FALLBACK_WORK_END;
@@ -452,10 +449,8 @@ export default function DayView({ workspace }) {
     setTimeout(() => addClientSearchRef.current?.focus(), 0);
   }
 
-  // auto-kaina greitam pridėjimui
-  useEffect(() => {
-    setAddPriceEdited(false);
-  }, [addForm.category, addForm.serviceId]);
+  // auto-kaina (Pridėti)
+  useEffect(() => setAddPriceEdited(false), [addForm.category, addForm.serviceId]);
   useEffect(() => {
     if (addPriceEdited) return;
     if (selectedAddService && selectedAddService.default_price != null) {
@@ -481,10 +476,7 @@ export default function DayView({ workspace }) {
     if (!addForm.category)
       return { ok: false, reason: "Pasirinkite kategoriją." };
     if (!validTimeRange(addForm.start, addForm.end))
-      return {
-        ok: false,
-        reason: "Neteisingas laiko intervalas (Nuo < Iki).",
-      };
+      return { ok: false, reason: "Neteisingas laiko intervalas (Nuo < Iki)." };
     if (addForm.price !== "" && Number(addForm.price) < 0)
       return { ok: false, reason: "Kaina negali būti neigiama." };
     return { ok: true };
@@ -532,11 +524,9 @@ export default function DayView({ workspace }) {
         .single();
       if (error) throw error;
 
-      setItems((prev) => {
-        const next = [...prev, data].sort(byStart);
-        return next;
-      });
+      setItems((prev) => [...prev, data].sort(byStart));
 
+      // sėkmės pranešimas ir modalą uždarom
       setMsg({ type: "ok", text: "Rezervacija sukurta." });
       setAddOpen(false);
     } catch (e) {
@@ -546,6 +536,37 @@ export default function DayView({ workspace }) {
     }
   }
 
+  // Debounce paieškai + fetch klientų (rodome nuo 2 simbolių)
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedClientSearch(clientSearch.trim()), 300);
+    return () => clearTimeout(t);
+  }, [clientSearch]);
+
+  useEffect(() => {
+    async function fetchClients() {
+      if (!workspace?.id) return;
+      const q = debouncedClientSearch;
+      if (q.length < 2) {
+        setClients([]);
+        return;
+      }
+      const { data, error } = await supabase
+        .from("clients")
+        .select("*")
+        .eq("workspace_id", workspace.id)
+        .ilike("name", `%${q}%`)
+        .order("name", { ascending: true })
+        .limit(100);
+      if (error) {
+        setMsg({ type: "error", text: error.message });
+        return;
+      }
+      setClients(data || []);
+    }
+    fetchClients();
+  }, [debouncedClientSearch, workspace?.id]);
+
+  /* ---- Kliento kūrimas modale ---- */
   async function createClient() {
     if (creatingClient) return;
     if (!newClient.name.trim()) {
@@ -588,7 +609,6 @@ export default function DayView({ workspace }) {
     year: "numeric",
   });
 
-  // klaviatūra modaluose
   const onAddKeyDown = (e) => {
     if (e.key === "Escape") setAddOpen(false);
     if (e.key === "Enter" && !savingAdd) {
@@ -596,31 +616,6 @@ export default function DayView({ workspace }) {
       saveAdd();
     }
   };
-
-  /* ---- Miesto pasirinkimas pasirinktai dienai ---- */
-  async function updateDayCity(newCityName) {
-    if (!workspace?.id) return;
-    try {
-      setSavingDayCity(true);
-      const next = { ...dayCityMap };
-      if (!newCityName) {
-        delete next[date]; // nuimti priskyrimą
-      } else {
-        next[date] = newCityName;
-      }
-      setDayCityMap(next);
-      const { error } = await supabase
-        .from("workspaces")
-        .update({ city_schedule: next })
-        .eq("id", workspace.id);
-      if (error) throw error;
-      setMsg({ type: "ok", text: "Dienos darbo vieta atnaujinta." });
-    } catch (e) {
-      setMsg({ type: "error", text: e.message || "Nepavyko išsaugoti dienos miesto." });
-    } finally {
-      setSavingDayCity(false);
-    }
-  }
 
   return (
     <div className="bg-white rounded-2xl shadow p-3 sm:p-5 space-y-2 sm:space-y-4">
@@ -640,7 +635,7 @@ export default function DayView({ workspace }) {
 
       {/* Kalendorius */}
       <div>
-        <div className="flex items-center mb-1 sm:mb-2">
+        <div className="flex items-center mb-1 sm:mb-2 gap-2">
           <div className="text-base sm:text-lg font-semibold mr-2 sm:mr-3">
             Kalendorius
           </div>
@@ -652,6 +647,21 @@ export default function DayView({ workspace }) {
             >
               ◀
             </button>
+
+            {/* Šiandien */}
+            <button
+              className="px-2 py-1.5 sm:px-3 sm:py-2 rounded-xl border hover:bg-gray-50"
+              onClick={() => {
+                const t = new Date();
+                const ds = format(t, "yyyy-MM-dd");
+                setDate(ds);
+                setViewMonth(new Date(t.getFullYear(), t.getMonth(), 1));
+              }}
+              aria-label="Šiandien"
+            >
+              Šiandien
+            </button>
+
             <div className="min-w-[150px] sm:min-w-[180px] text-center font-medium capitalize text-sm sm:text-base">
               {monthLabel}
             </div>
@@ -696,7 +706,7 @@ export default function DayView({ workspace }) {
           ))}
         </div>
 
-        {/* Dienų tinklelis — langelis nuspalvintas miesto spalva */}
+        {/* Dienų tinklelis — nuspalvinama pagal cities[].days */}
         <div className="grid grid-cols-7 gap-1 sm:gap-2">
           {monthGridDays.map((d) => {
             const isOtherMonth = !isSameMonth(d, viewMonth);
@@ -705,8 +715,10 @@ export default function DayView({ workspace }) {
             const isToday = d.toDateString() === new Date().toDateString();
             const isWeekend = d.getDay() === 6 || d.getDay() === 0;
 
-            const assignedCity = dayCityMap[dStr] || "";
-            const assignedColor = assignedCity ? cityColorByName(assignedCity) : null;
+            const isoDay = getISODay(d); // 1..7
+            const city = cityForIsoDay(isoDay);
+            const assignedCity = city?.name || "";
+            const assignedColor = city?.color || null;
 
             const baseCls =
               "relative h-9 sm:h-12 rounded-xl border text-[13px] sm:text-sm flex items-center justify-center transition-colors " +
@@ -716,7 +728,8 @@ export default function DayView({ workspace }) {
                 ? "hover:bg-rose-100"
                 : "hover:bg-gray-50") +
               (isOtherMonth ? " opacity-40" : "") +
-              (isToday && !isSelected ? " ring-1 ring-emerald-300" : "") +
+              // ryškiau pažymim šiandieną, jei ji nepažymėta
+              (isToday && !isSelected ? " border-2 border-emerald-500 ring-1 ring-emerald-200" : "") +
               (!isSelected && assignedCity ? " text-white" : "");
 
             return (
@@ -732,8 +745,13 @@ export default function DayView({ workspace }) {
                 }
               >
                 {d.getDate()}
-
-                {/* Miesto pavadinimas apatiniame kairiajame kampe */}
+                {/* Mažas indikatorius šiandienai */}
+                {isToday && !isSelected && (
+                  <span
+                    className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-emerald-500"
+                    aria-label="Šiandien"
+                  />
+                )}
                 {!isSelected && assignedCity && !isOtherMonth && (
                   <div className="absolute left-1 bottom-0.5 text-[10px] sm:text-[11px] font-medium pointer-events-none">
                     {assignedCity}
@@ -745,7 +763,7 @@ export default function DayView({ workspace }) {
         </div>
       </div>
 
-      {/* Pasirinktos dienos antraštė + miesto pasirinkėjas */}
+      {/* Pasirinktos dienos antraštė (miestas rodomas tik informacinis, be selektoriaus) */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
         <div className="text-sm sm:text-base font-medium">
           {new Date(date).toLocaleDateString("lt-LT", {
@@ -754,33 +772,12 @@ export default function DayView({ workspace }) {
             day: "numeric",
           })}
         </div>
-
-        {/* Miesto pasirinkimas šiai dienai */}
-        <div className="flex items-center gap-2">
-          <select
-            className="px-2.5 py-1.5 rounded-xl border text-sm"
-            value={selectedDayCityName}
-            onChange={(e) => updateDayCity(e.target.value || "")}
-            disabled={savingDayCity}
-            aria-label="Dienos darbo vieta (miestas)"
-          >
-            <option value="">— Be priskyrimo —</option>
-            {cities.map((c) => (
-              <option key={c.name} value={c.name}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          {selectedDayCityName && (
-            <div className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-xl border text-xs sm:text-sm">
-              <span
-                className="inline-block w-3 h-3 rounded"
-                style={{ backgroundColor: cityColorByName(selectedDayCityName) }}
-              />
-              {selectedDayCityName}
-            </div>
-          )}
-        </div>
+        {currentCityName && (
+          <div className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-xl border text-xs sm:text-sm">
+            <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: currentCityColor }} />
+            {currentCityName}
+          </div>
+        )}
       </div>
 
       {/* Dienos įrašai */}
@@ -798,9 +795,7 @@ export default function DayView({ workspace }) {
               >
                 <div className="font-medium text-[13px] sm:text-base leading-tight">
                   Laisvas tarpas {slot.from}–{slot.to}{" "}
-                  <span className="text-amber-700">
-                    • {diffMin(slot.from, slot.to)} min
-                  </span>
+                  <span className="text-amber-700">• {diffMin(slot.from, slot.to)} min</span>
                 </div>
                 <button
                   onClick={() => openAdd(slot.from, slot.to)}
@@ -820,7 +815,7 @@ export default function DayView({ workspace }) {
                   setExpandedId((prev) => (prev === slot.data.id ? null : slot.data.id))
                 }
               >
-                {/* SPALVOS JUOSTA: prioritetas (dienos miestas > paslaugos spalva > kategorija > pilka) */}
+                {/* SPALVOS JUOSTA */}
                 <div
                   className="absolute left-0 top-0 bottom-0 rounded-l-2xl"
                   style={{ width: "6px", backgroundColor: colorForAppt(slot.data) }}
@@ -829,7 +824,7 @@ export default function DayView({ workspace }) {
 
                 {editingId === slot.data.id ? (
                   <div className="space-y-3">
-                    {/* Kategorija + subpaslauga redagavimo formoje */}
+                    {/* Kategorija + subpaslauga */}
                     <div>
                       <div className="text-[11px] text-gray-500 mb-1">Kategorija</div>
                       <div className="flex flex-wrap gap-1.5 sm:gap-2">
@@ -989,13 +984,13 @@ export default function DayView({ workspace }) {
                             <div>
                               {t5(slot.data.start_time)}–{t5(slot.data.end_time)}
                             </div>
-                            {selectedDayCityName && (
+                            {currentCityName && (
                               <div className="inline-flex items-center gap-1">
                                 <span
                                   className="inline-block w-2 h-2 rounded"
-                                  style={{ backgroundColor: cityColorByName(selectedDayCityName) }}
+                                  style={{ backgroundColor: currentCityColor }}
                                 />
-                                <span>{selectedDayCityName}</span>
+                                <span>{currentCityName}</span>
                               </div>
                             )}
                             {slot.data.note && (
@@ -1084,10 +1079,7 @@ export default function DayView({ workspace }) {
         title="Pridėti rezervaciją"
         footer={
           <div className="flex gap-2 justify-end">
-            <button
-              className="px-3 py-2 rounded-xl border"
-              onClick={() => setAddOpen(false)}
-            >
+            <button className="px-3 py-2 rounded-xl border" onClick={() => setAddOpen(false)}>
               Atšaukti
             </button>
             <button
@@ -1126,7 +1118,7 @@ export default function DayView({ workspace }) {
               <input
                 ref={addClientSearchRef}
                 className="w-full px-3 py-2 rounded-xl border"
-                placeholder="Paieška pagal vardą"
+                placeholder="Įveskite bent 2 raides..."
                 value={clientSearch}
                 onChange={(e) => setClientSearch(e.target.value)}
                 aria-label="Kliento paieška"
@@ -1139,14 +1131,10 @@ export default function DayView({ workspace }) {
                       key={c.id}
                       onClick={() => setSelectedClientId(c.id)}
                       className={`w-full text-left px-3 py-2 ${
-                        sel
-                          ? "bg-emerald-50 border-l-4 border-emerald-500"
-                          : "hover:bg-gray-50"
+                        sel ? "bg-emerald-50 border-l-4 border-emerald-500" : "hover:bg-gray-50"
                       }`}
                     >
-                      <div className={`font-medium ${sel ? "text-emerald-700" : ""}`}>
-                        {c.name}
-                      </div>
+                      <div className={`font-medium ${sel ? "text-emerald-700" : ""}`}>{c.name}</div>
                       <div className="text-xs text-gray-600">
                         {c.phone || "—"} {c.email ? "• " + c.email : ""}
                       </div>
@@ -1154,7 +1142,9 @@ export default function DayView({ workspace }) {
                   );
                 })}
                 {clients.length === 0 && (
-                  <div className="px-3 py-2 text-sm text-gray-500">Nėra įrašų.</div>
+                  <div className="px-3 py-2 text-sm text-gray-500">
+                    Įveskite bent 2 raides, kad pamatytumėte klientų sąrašą.
+                  </div>
                 )}
               </div>
             </div>
@@ -1193,10 +1183,7 @@ export default function DayView({ workspace }) {
                         className="w-full px-3 py-2 rounded-xl border"
                         value={addForm.serviceId || ""}
                         onChange={(e) =>
-                          setAddForm((f) => ({
-                            ...f,
-                            serviceId: e.target.value || null,
-                          }))
+                          setAddForm((f) => ({ ...f, serviceId: e.target.value || null }))
                         }
                         aria-label="Subpaslauga"
                       >
@@ -1210,8 +1197,7 @@ export default function DayView({ workspace }) {
                     </>
                   ) : (
                     <div className="text-sm text-gray-600">
-                      Ši kategorija neturi subpaslaugų — bus naudojama tik
-                      kategorija.
+                      Ši kategorija neturi subpaslaugų — bus naudojama tik kategorija.
                     </div>
                   )}
                 </div>
@@ -1257,9 +1243,7 @@ export default function DayView({ workspace }) {
                   rows={2}
                   className="w-full px-3 py-2 rounded-xl border"
                   value={addForm.note}
-                  onChange={(e) =>
-                    setAddForm((f) => ({ ...f, note: e.target.value }))
-                  }
+                  onChange={(e) => setAddForm((f) => ({ ...f, note: e.target.value }))}
                 />
               </div>
             </div>
@@ -1274,10 +1258,7 @@ export default function DayView({ workspace }) {
         title="Naujas klientas"
         footer={
           <div className="flex gap-2 justify-end">
-            <button
-              className="px-3 py-2 rounded-xl border"
-              onClick={() => setNewClientOpen(false)}
-            >
+            <button className="px-3 py-2 rounded-xl border" onClick={() => setNewClientOpen(false)}>
               Atšaukti
             </button>
             <button
@@ -1296,32 +1277,24 @@ export default function DayView({ workspace }) {
               className="px-3 py-2 rounded-xl border"
               placeholder="Vardas ir pavardė"
               value={newClient.name}
-              onChange={(e) =>
-                setNewClient({ ...newClient, name: e.target.value })
-              }
+              onChange={(e) => setNewClient({ ...newClient, name: e.target.value })}
             />
             <input
               className="px-3 py-2 rounded-xl border"
               placeholder="Telefonas"
               value={newClient.phone}
-              onChange={(e) =>
-                setNewClient({ ...newClient, phone: e.target.value })
-              }
+              onChange={(e) => setNewClient({ ...newClient, phone: e.target.value })}
             />
             <input
               className="px-3 py-2 rounded-xl border"
               placeholder="El. paštas"
               value={newClient.email}
-              onChange={(e) =>
-                setNewClient({ ...newClient, email: e.target.value })
-              }
+              onChange={(e) => setNewClient({ ...newClient, email: e.target.value })}
             />
             <select
               className="px-3 py-2 rounded-xl border"
               value={newClient.gender}
-              onChange={(e) =>
-                setNewClient({ ...newClient, gender: e.target.value })
-              }
+              onChange={(e) => setNewClient({ ...newClient, gender: e.target.value })}
             >
               <option value="female">Moteris</option>
               <option value="male">Vyras</option>

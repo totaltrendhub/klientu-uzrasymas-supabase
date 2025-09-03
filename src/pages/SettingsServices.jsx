@@ -260,6 +260,40 @@ function MobileServicesList({
   );
 }
 
+/* ---- Dienų (Pr–Sk) komponentas vienai miesto eilei ---- */
+const DAY_LABELS = ["Pr", "An", "Tr", "Kt", "Pn", "Št", "Sk"]; // 1..7 (ISO)
+function DaysPicker({ value = [], onChange }) {
+  // saugom ISO indeksus 1..7
+  const toggle = (d) => {
+    const has = value.includes(d);
+    const next = has ? value.filter((x) => x !== d) : [...value, d].sort((a, b) => a - b);
+    onChange(next);
+  };
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {DAY_LABELS.map((lbl, idx) => {
+        const d = idx + 1;
+        const active = value.includes(d);
+        return (
+          <button
+            key={d}
+            type="button"
+            onClick={() => toggle(d)}
+            className={
+              "px-2 py-1 rounded-lg border text-xs " +
+              (active ? "bg-emerald-600 text-white border-emerald-600" : "bg-white hover:bg-gray-50")
+            }
+            aria-pressed={active}
+            title={lbl}
+          >
+            {lbl}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function SettingsServices({ workspace }) {
   const [list, setList] = useState([]);
   const [loadingList, setLoadingList] = useState(false);
@@ -275,39 +309,39 @@ export default function SettingsServices({ workspace }) {
   const [savingHours, setSavingHours] = useState(false);
 
   /* ---- Miestai (darbo vietos) ---- */
-  const [cities, setCities] = useState([]); // [{name, color}]
+  // Dabar kiekvienas miestas: { id, name, color, days: number[] }
+  const [cities, setCities] = useState([]);
   const [savingCities, setSavingCities] = useState(false);
 
-  // Kurti paslaugą (kategorija + (nebūtinas) sąrašas subkategorijų)
+  // Kurti paslaugą
   const [createOpen, setCreateOpen] = useState(false);
   const [catName, setCatName] = useState("");
   const [categoryPrice, setCategoryPrice] = useState("");
-  const [categoryColor, setCategoryColor] = useState(""); // tuščia = numatyta (pilka)
+  const [categoryColor, setCategoryColor] = useState("");
   const [excludeFromStats, setExcludeFromStats] = useState(false);
   const [rows, setRows] = useState([{ name: "", price: "", color: "" }]);
   const [creating, setCreating] = useState(false);
   const createFirstInputRef = useRef(null);
 
-  // Redaguoti vieną įrašą
+  // Redagavimas
   const [editOpen, setEditOpen] = useState(false);
   const [editForm, setEditForm] = useState({
     id: null,
     category: "",
     name: "",
     price: "",
-    color: "", // tuščia = numatyta (pilka)
+    color: "",
     exclude: false,
   });
   const [saving, setSaving] = useState(false);
   const editFirstInputRef = useRef(null);
 
-  // Dots meniu būsena (lentelės/kartelem)
+  // Dots meniu būsena
   const [menuId, setMenuId] = useState(null);
-  const menuBtnRef = useRef({}); // { [id]: ref }
+  const menuBtnRef = useRef({});
   const [deletingId, setDeletingId] = useState(null);
 
   /* ---------- Užkrovimai ---------- */
-  // Darbo laikas + miestai iš workspaces
   useEffect(() => {
     async function loadWorkspaceSettings() {
       if (!workspace?.id) return;
@@ -320,16 +354,19 @@ export default function SettingsServices({ workspace }) {
       if (data) {
         setWorkStart((data.work_start || "").slice(0, 5) || DEFAULT_WORK_START);
         setWorkEnd((data.work_end || "").slice(0, 5) || DEFAULT_WORK_END);
+
         const arr = Array.isArray(data.cities) ? data.cities : [];
         setCities(
           arr.map((c, idx) => ({
-            // jei vėliau pridėsite ID – irgi veiks
             id: c?.id ?? idx,
             name: norm(c?.name),
             color:
               validHex(norm(c?.color)) && norm(c?.color)
                 ? norm(c?.color)
                 : DEFAULT_GRAY,
+            days: Array.isArray(c?.days)
+              ? c.days.filter((n) => Number.isInteger(n) && n >= 1 && n <= 7)
+              : [], // nauja: dienos
           }))
         );
       }
@@ -416,11 +453,14 @@ export default function SettingsServices({ workspace }) {
   function addCity() {
     setCities((c) => [
       ...c,
-      { id: Date.now(), name: "", color: DEFAULT_GRAY },
+      { id: Date.now(), name: "", color: DEFAULT_GRAY, days: [] },
     ]);
   }
   function setCity(i, patch) {
     setCities((arr) => arr.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
+  }
+  function setCityDays(i, days) {
+    setCities((arr) => arr.map((c, idx) => (idx === i ? { ...c, days } : c)));
   }
   function removeCity(i) {
     const label = cities[i]?.name || "miestą";
@@ -434,6 +474,7 @@ export default function SettingsServices({ workspace }) {
     for (const c of cities) {
       if (!norm(c.name)) return { ok: false, reason: "Miesto pavadinimas negali būti tuščias." };
       if (!validHex(norm(c.color))) return { ok: false, reason: `Netinkama spalva miestui „${c.name}“.` };
+      if (!Array.isArray(c.days)) return { ok: false, reason: `Netinkamas dienų formatas miestui „${c.name}“.` };
     }
     return { ok: true };
   }
@@ -447,11 +488,16 @@ export default function SettingsServices({ workspace }) {
     try {
       setSavingCities(true);
       const payload = {
-        cities: cities.map((c) => ({ name: norm(c.name), color: norm(c.color) || DEFAULT_GRAY })),
+        // Nauja: išsaugome ir days
+        cities: cities.map((c) => ({
+          name: norm(c.name),
+          color: norm(c.color) || DEFAULT_GRAY,
+          days: Array.isArray(c.days) ? c.days : [],
+        })),
       };
       const { error } = await supabase.from("workspaces").update(payload).eq("id", workspace.id);
       if (error) throw error;
-      setMsg({ type: "ok", text: "Miestai išsaugoti." });
+      setMsg({ type: "ok", text: "Miestai ir dienos išsaugoti." });
     } catch (e) {
       setMsg({ type: "error", text: e.message || "Nepavyko išsaugoti miestų." });
     } finally {
@@ -480,14 +526,12 @@ export default function SettingsServices({ workspace }) {
     setRows((r) => r.map((row, idx) => (idx === i ? { ...row, ...patch } : row)));
   }
 
-  // fokusas į pirmą lauką atidarius "Kurti"
   useEffect(() => {
     if (createOpen && createFirstInputRef.current) {
       createFirstInputRef.current.focus();
     }
   }, [createOpen]);
 
-  // Enter=Išsaugoti, Esc=Uždaryti (kurti)
   const onCreateKeyDown = (e) => {
     if (e.key === "Escape") setCreateOpen(false);
     if (e.key === "Enter" && !creating) {
@@ -697,7 +741,6 @@ export default function SettingsServices({ workspace }) {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
           <div>
             <div className="text-xs text-gray-500 mb-1">Nuo</div>
-            {/* 24h: naudojam bendrą TimeField */}
             <TimeField value={workStart} onChange={setWorkStart} step={60} />
           </div>
           <div>
@@ -730,7 +773,7 @@ export default function SettingsServices({ workspace }) {
         <div className="flex items-center justify-between gap-2">
           <div className="text-base sm:text-lg font-semibold">
             Darbo vietos (miestai)
-            <Tooltip content="Čia priskirtos spalvos padeda atskirti miestus dienos kalendoriuje — pasirinkto miesto spalva matoma kaip akcentas.">
+            <Tooltip content="Kiekvienam miestui pasirinkite spalvą ir savaitės dienas, kuriomis ten dirbate. Vėliau dienos bus automatiškai nuspalvintos kalendoriuje.">
               <HelpDot />
             </Tooltip>
           </div>
@@ -743,16 +786,18 @@ export default function SettingsServices({ workspace }) {
           <div className="text-sm text-gray-600">Miestų dar nėra.</div>
         )}
 
-        <div className="space-y-2">
+        <div className="space-y-3">
           {cities.map((c, i) => (
             <div key={c.id ?? i} className="grid grid-cols-12 gap-2 items-center">
+              {/* Pavadinimas */}
               <input
-                className="col-span-7 sm:col-span-6 border rounded-xl px-3 py-2"
+                className="col-span-6 sm:col-span-4 border rounded-xl px-3 py-2"
                 placeholder="Miesto pavadinimas"
                 value={c.name}
                 onChange={(e) => setCity(i, { name: e.target.value })}
               />
-              <div className="col-span-3 sm:col-span-2 flex items-center">
+              {/* Spalva */}
+              <div className="col-span-2 sm:col-span-2 flex items-center">
                 <input
                   type="color"
                   className="w-10 h-10 p-0 border rounded-xl"
@@ -762,9 +807,15 @@ export default function SettingsServices({ workspace }) {
                   aria-label="Miesto spalva"
                 />
               </div>
-              <div className="col-span-2 sm:col-span-2 flex justify-end">
+              {/* Dienos */}
+              <div className="col-span-12 sm:col-span-5">
+                <div className="text-[11px] text-gray-500 mb-1">Dienos (Pr–Sk)</div>
+                <DaysPicker value={c.days || []} onChange={(days) => setCityDays(i, days)} />
+              </div>
+              {/* Šalinti */}
+              <div className="col-span-12 sm:col-span-1 flex sm:justify-end">
                 <button
-                  className="px-3 py-2 rounded-xl hover:bg-rose-50 border text-rose-600"
+                  className="px-3 py-2 rounded-xl hover:bg-rose-50 border text-rose-600 w-full sm:w-auto"
                   onClick={() => removeCity(i)}
                   title="Pašalinti miestą"
                 >
@@ -785,7 +836,7 @@ export default function SettingsServices({ workspace }) {
           </button>
         </div>
         <div className="text-xs text-gray-500">
-          Patarimas: spalvas rinkitės ryškias, kad DayView būtų aišku, kuriame mieste dirbate.
+          Patarimas: spalvas rinkitės ryškias, o dienas – pagal realų darbo grafiką skirtinguose miestuose.
         </div>
       </div>
 
@@ -969,10 +1020,7 @@ export default function SettingsServices({ workspace }) {
                         open={menuId === svc.id}
                         onClose={() => setMenuId(null)}
                         items={[
-                          {
-                            label: "Koreguoti",
-                            onClick: () => openEdit(svc),
-                          },
+                          { label: "Koreguoti", onClick: () => openEdit(svc) },
                           {
                             label: "Šalinti paslaugą",
                             danger: true,
