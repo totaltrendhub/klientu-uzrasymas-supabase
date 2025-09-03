@@ -142,7 +142,7 @@ export default function Booking({ workspace }) {
       }
     }
     loadServices();
-  }, [workspace.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [workspace.id]);
 
   useEffect(() => {
     async function loadClients() {
