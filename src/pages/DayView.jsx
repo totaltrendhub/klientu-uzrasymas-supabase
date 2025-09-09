@@ -47,6 +47,13 @@ function StatusPill({ status }) {
   );
 }
 
+// --- textarea auto-resize helper ---
+function autoGrow(el) {
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = el.scrollHeight + "px";
+}
+
 export default function DayView({ workspace }) {
   const [msg, setMsg] = useState(null);
   useEffect(() => {
@@ -218,7 +225,7 @@ export default function DayView({ workspace }) {
     fetchServices();
   }, [workspace.id]);
 
-  /* ---- Miesto logika iš SettingsServices (cities[].days) ---- */
+  /* ---- Miesto info (tik kalendoriaus dėžutėms) ---- */
   const cityForIsoDay = (isoDay) =>
     cities.find((c) => Array.isArray(c.days) && c.days.includes(isoDay)) || null;
 
@@ -228,13 +235,12 @@ export default function DayView({ workspace }) {
   const currentCityColor = currentCity?.color || DEFAULT_COLOR;
 
   /* ---- Spalvos įrašams ----
-     Prioritetas: 1) Miestas pagal dieną (jei yra)
-                  2) Subpaslaugos spalva
-                  3) Kategorijos (be name) spalva
-                  4) Pilka
+     DABAR (kaip prašei): miestas įrašo spalvos nekeičia.
+     Prioritetas: 1) Subpaslaugos spalva
+                  2) Kategorijos (be name) spalva
+                  3) Pilka
   */
   const colorForAppt = (a) => {
-    if (currentCityName) return currentCityColor;
     if (a?.services?.color) return String(a.services.color);
     const cat = a?.services?.category || a?.category || "";
     const catRow = services.find(
@@ -470,6 +476,11 @@ export default function DayView({ workspace }) {
     }
   }, [addForm.category, addForm.serviceId, selectedAddService, services, addPriceEdited]);
 
+  function validTimeRange(start, end) {
+    if (!start || !end) return false;
+    return toMin(start) < toMin(end);
+  }
+
   function validAdd() {
     if (!selectedClientId)
       return { ok: false, reason: "Pasirinkite klientą arba sukurkite naują." };
@@ -525,8 +536,6 @@ export default function DayView({ workspace }) {
       if (error) throw error;
 
       setItems((prev) => [...prev, data].sort(byStart));
-
-      // sėkmės pranešimas ir modalą uždarom
       setMsg({ type: "ok", text: "Rezervacija sukurta." });
       setAddOpen(false);
     } catch (e) {
@@ -609,12 +618,14 @@ export default function DayView({ workspace }) {
     year: "numeric",
   });
 
+  // modal klaviatūra: Enter leidžiam tik Ctrl/⌘+Enter; textarea – visada leidžiam Enter
   const onAddKeyDown = (e) => {
-    if (e.key === "Escape") setAddOpen(false);
-    if (e.key === "Enter" && !savingAdd) {
+    if (e.target && e.target.tagName === "TEXTAREA") return;
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !savingAdd) {
       e.preventDefault();
       saveAdd();
     }
+    if (e.key === "Escape") setAddOpen(false);
   };
 
   return (
@@ -728,7 +739,6 @@ export default function DayView({ workspace }) {
                 ? "hover:bg-rose-100"
                 : "hover:bg-gray-50") +
               (isOtherMonth ? " opacity-40" : "") +
-              // ryškiau pažymim šiandieną, jei ji nepažymėta
               (isToday && !isSelected ? " border-2 border-emerald-500 ring-1 ring-emerald-200" : "") +
               (!isSelected && assignedCity ? " text-white" : "");
 
@@ -745,7 +755,6 @@ export default function DayView({ workspace }) {
                 }
               >
                 {d.getDate()}
-                {/* Mažas indikatorius šiandienai */}
                 {isToday && !isSelected && (
                   <span
                     className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-emerald-500"
@@ -763,7 +772,7 @@ export default function DayView({ workspace }) {
         </div>
       </div>
 
-      {/* Pasirinktos dienos antraštė (miestas rodomas tik informacinis, be selektoriaus) */}
+      {/* Pasirinktos dienos antraštė (miestas – informacinis) */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
         <div className="text-sm sm:text-base font-medium">
           {new Date(date).toLocaleDateString("lt-LT", {
@@ -815,7 +824,7 @@ export default function DayView({ workspace }) {
                   setExpandedId((prev) => (prev === slot.data.id ? null : slot.data.id))
                 }
               >
-                {/* SPALVOS JUOSTA */}
+                {/* SPALVOS JUOSTA (tik paslaugos/kategorijos) */}
                 <div
                   className="absolute left-0 top-0 bottom-0 rounded-l-2xl"
                   style={{ width: "6px", backgroundColor: colorForAppt(slot.data) }}
@@ -929,12 +938,15 @@ export default function DayView({ workspace }) {
                       </div>
                       <div className="md:col-span-6">
                         <div className="text-[11px] text-gray-500">Pastabos</div>
-                        <input
+                        <textarea
+                          rows={2}
                           className="w-full px-2.5 py-2 rounded-xl border text-sm"
                           value={edit.note}
-                          onChange={(e) =>
-                            setEdit({ ...edit, note: e.target.value })
-                          }
+                          onChange={(e) => {
+                            setEdit({ ...edit, note: e.target.value });
+                            autoGrow(e.target);
+                          }}
+                          ref={(el) => el && autoGrow(el)}
                         />
                       </div>
                       <div className="flex gap-2 md:col-span-6">
@@ -1092,7 +1104,7 @@ export default function DayView({ workspace }) {
           </div>
         }
       >
-        <div className="max-h-[70vh] overflow-y-auto pr-1" onKeyDown={onAddKeyDown}>
+        <div className="max-h-[70vh] overflow-y-auto pr-1 ios-scroll" onKeyDown={onAddKeyDown}>
           <div className="md:hidden sticky top-0 z-10 flex justify-end -mt-2 -mr-2">
             <button
               onClick={() => setAddOpen(false)}
@@ -1120,7 +1132,11 @@ export default function DayView({ workspace }) {
                 className="w-full px-3 py-2 rounded-xl border"
                 placeholder="Įveskite bent 2 raides..."
                 value={clientSearch}
-                onChange={(e) => setClientSearch(e.target.value)}
+                onChange={(e) => {
+                  setClientSearch(e.target.value);
+                  // jei keičiam paiešką – atšaukiam ankstesnį pasirinkimą
+                  setSelectedClientId(null);
+                }}
                 aria-label="Kliento paieška"
               />
               <div className="max-h-48 overflow-auto mt-2 border rounded-2xl divide-y">
@@ -1129,7 +1145,12 @@ export default function DayView({ workspace }) {
                   return (
                     <button
                       key={c.id}
-                      onClick={() => setSelectedClientId(c.id)}
+                      onClick={() => {
+                        setSelectedClientId(c.id);
+                        setClientSearch(c.name);      // įrašom vardą
+                        setClients([]);               // paslepiam pasiūlymus
+                        addClientSearchRef.current?.blur(); // uždarom klaviatūrą
+                      }}
                       className={`w-full text-left px-3 py-2 ${
                         sel ? "bg-emerald-50 border-l-4 border-emerald-500" : "hover:bg-gray-50"
                       }`}
@@ -1243,7 +1264,11 @@ export default function DayView({ workspace }) {
                   rows={2}
                   className="w-full px-3 py-2 rounded-xl border"
                   value={addForm.note}
-                  onChange={(e) => setAddForm((f) => ({ ...f, note: e.target.value }))}
+                  onChange={(e) => {
+                    setAddForm((f) => ({ ...f, note: e.target.value }));
+                    autoGrow(e.target);
+                  }}
+                  ref={(el) => el && autoGrow(el)}
                 />
               </div>
             </div>
@@ -1271,7 +1296,7 @@ export default function DayView({ workspace }) {
           </div>
         }
       >
-        <div className="max-h-[70vh] overflow-y-auto pr-1">
+        <div className="max-h-[70vh] overflow-y-auto pr-1 ios-scroll">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <input
               className="px-3 py-2 rounded-xl border"
