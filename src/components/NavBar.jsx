@@ -2,11 +2,9 @@ import React from "react";
 
 const tabs = [
   { key: "day", label: "Kalendorius", icon: "🗓️" },
-  { key: "booking", label: "Rezervacija", icon: "📅" },
   { key: "clients", label: "Klientai", icon: "👤" },
   { key: "stats", label: "Statistika", icon: "📈" },
   { key: "services", label: "Paslaugos", icon: "🛠️" },
-  { key: "pricing", label: "Planai", icon: "💳" },
 ];
 
 export default function NavBar({ tab, setTab }){
