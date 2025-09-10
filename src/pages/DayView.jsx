@@ -618,6 +618,16 @@ export default function DayView({ workspace }) {
     year: "numeric",
   });
 
+  // navigacijos helperiai, kad nebūtų dubliavimo tarp mobil/desktop
+  const goToday = () => {
+    const t = new Date();
+    const ds = format(t, "yyyy-MM-dd");
+    setDate(ds);
+    setViewMonth(new Date(t.getFullYear(), t.getMonth(), 1));
+  };
+  const prevMonth = () => setViewMonth((d) => addMonths(d, -1));
+  const nextMonth = () => setViewMonth((d) => addMonths(d, 1));
+
   // modal klaviatūra: Enter leidžiam tik Ctrl/⌘+Enter; textarea – visada leidžiam Enter
   const onAddKeyDown = (e) => {
     if (e.target && e.target.tagName === "TEXTAREA") return;
@@ -645,40 +655,64 @@ export default function DayView({ workspace }) {
       )}
 
       {/* Kalendorius */}
-      <div>
-        <div className="flex items-center mb-1 sm:mb-2 gap-2">
-          <div className="text-base sm:text-lg font-semibold mr-2 sm:mr-3">
-            Kalendorius
-          </div>
-          <div className="flex items-center gap-1 sm:gap-2">
+      <div className="overflow-x-hidden">
+        {/* Mobile (kompaktiška) */}
+        <div className="sm:hidden mb-2">
+          <div className="text-base font-semibold mb-1">Kalendorius</div>
+          <div className="grid grid-cols-[auto,1fr,auto] items-center gap-1 w-full">
             <button
-              className="px-2 py-1.5 sm:px-3 sm:py-2 rounded-xl border hover:bg-gray-50"
-              onClick={() => setViewMonth((d) => addMonths(d, -1))}
+              className="h-8 w-8 rounded-xl border hover:bg-gray-50 flex items-center justify-center"
+              onClick={prevMonth}
               aria-label="Ankstesnis mėnuo"
             >
               ◀
             </button>
-
-            {/* Šiandien */}
+            <div className="text-center font-medium capitalize text-sm truncate">
+              {monthLabel}
+            </div>
             <button
-              className="px-2 py-1.5 sm:px-3 sm:py-2 rounded-xl border hover:bg-gray-50"
-              onClick={() => {
-                const t = new Date();
-                const ds = format(t, "yyyy-MM-dd");
-                setDate(ds);
-                setViewMonth(new Date(t.getFullYear(), t.getMonth(), 1));
-              }}
+              className="h-8 w-8 rounded-xl border hover:bg-gray-50 flex items-center justify-center"
+              onClick={nextMonth}
+              aria-label="Kitas mėnuo"
+            >
+              ▶
+            </button>
+          </div>
+          <div className="mt-2">
+            <button
+              className="text-xs px-2 py-1.5 rounded-xl border hover:bg-gray-50"
+              onClick={goToday}
               aria-label="Šiandien"
             >
               Šiandien
             </button>
+          </div>
+        </div>
 
-            <div className="min-w-[150px] sm:min-w-[180px] text-center font-medium capitalize text-sm sm:text-base">
+        {/* Desktop / ≥sm */}
+        <div className="hidden sm:flex items-center mb-2 gap-2">
+          <div className="text-lg font-semibold mr-3">Kalendorius</div>
+          <div className="flex items-center gap-2">
+            <button
+              className="px-3 py-2 rounded-xl border hover:bg-gray-50"
+              onClick={prevMonth}
+              aria-label="Ankstesnis mėnuo"
+            >
+              ◀
+            </button>
+            <button
+              className="px-3 py-2 rounded-xl border hover:bg-gray-50"
+              onClick={goToday}
+              aria-label="Šiandien"
+            >
+              Šiandien
+            </button>
+            <div className="text-center font-medium capitalize text-base">
               {monthLabel}
             </div>
             <button
-              className="px-2 py-1.5 sm:px-3 sm:py-2 rounded-xl border hover:bg-gray-50"
-              onClick={() => setViewMonth((d) => addMonths(d, 1))}
+              className="px-3 py-2 rounded-xl border hover:bg-gray-50"
+              onClick={nextMonth}
               aria-label="Kitas mėnuo"
             >
               ▶
