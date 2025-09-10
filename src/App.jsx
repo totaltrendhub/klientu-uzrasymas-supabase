@@ -1,11 +1,9 @@
 // src/App.jsx
 import React, { useEffect, useState } from "react";
 import DayView from "./pages/DayView";
-import Booking from "./pages/Booking";
 import Clients from "./pages/Clients";
 import Stats from "./pages/Stats";
 import SettingsServices from "./pages/SettingsServices";
-import Pricing from "./pages/Pricing";
 import { supabase } from "./supabaseClient";
 import Login from "./Login";
 import NavBar from "./components/NavBar";
@@ -129,12 +127,10 @@ export default function App() {
 
       <NavBar tab={tab} setTab={setTab} />
 
-      {tab === "booking" && <Booking workspace={workspace} />}
       {tab === "day" && <DayView workspace={workspace} />}
       {tab === "clients" && <Clients workspace={workspace} />}
       {tab === "stats" && <Stats workspace={workspace} />}
       {tab === "services" && <SettingsServices workspace={workspace} />}
-      {tab === "pricing" && <Pricing workspace={workspace} setWorkspace={setWorkspace} />}
     </div>
   );
 }
